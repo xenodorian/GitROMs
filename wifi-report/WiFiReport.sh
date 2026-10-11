@@ -1,87 +1,103 @@
 #!/bin/bash
-# WiFiReport: read-only. Writes wifireport/WiFi_Report.txt describing the
-# kernel, USB devices and Wi-Fi support so a driver can be chosen.
-# Changes nothing, installs nothing, needs no root, uses no network.
-# Records no Wi-Fi names, passwords, MAC addresses or IP addresses.
+# WiFiReport: PortMaster-style launcher for ArkOS (R36S), native SDL2 build.
+# Read-only: shows kernel / USB / Wi-Fi support and saves it to a text file.
+# This file must sit directly in the ports folder, next to the gitroms folder.
+# That is what makes ArkOS list it under Ports.
 
 XDG_DATA_HOME=${XDG_DATA_HOME:-$HOME/.local/share}
-if [ -d "/opt/system/Tools/PortMaster/" ]; then controlfolder="/opt/system/Tools/PortMaster"
-elif [ -d "/opt/tools/PortMaster/" ]; then controlfolder="/opt/tools/PortMaster"
-elif [ -d "$XDG_DATA_HOME/PortMaster/" ]; then controlfolder="$XDG_DATA_HOME/PortMaster"
-else controlfolder="/roms/ports/PortMaster"; fi
+
+if [ -d "/opt/system/Tools/PortMaster/" ]; then
+  controlfolder="/opt/system/Tools/PortMaster"
+elif [ -d "/opt/tools/PortMaster/" ]; then
+  controlfolder="/opt/tools/PortMaster"
+elif [ -d "$XDG_DATA_HOME/PortMaster/" ]; then
+  controlfolder="$XDG_DATA_HOME/PortMaster"
+else
+  controlfolder="/roms/ports/PortMaster"
+fi
 
 PORTSDIR="$(cd "$(dirname "$0")" && pwd)"
-OUTDIR="$PORTSDIR/wifireport"
-mkdir -p "$OUTDIR" 2>/dev/null
-OUT="$OUTDIR/WiFi_Report.txt"
-if ! : > "$OUT" 2>/dev/null; then OUT="/tmp/WiFi_Report.txt"; : > "$OUT"; fi
+GAMEDIR="$PORTSDIR/wifireport"
 
-T=""; command -v timeout >/dev/null 2>&1 && T="timeout 5"
-# hide MAC and IPv4 addresses
-mask() { sed -E 's/([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}/xx:xx:xx:xx:xx:xx/g; s/[0-9]{1,3}(\.[0-9]{1,3}){3}/x.x.x.x/g'; }
-sec() { printf '\n==== %s ====\n' "$1" >> "$OUT"; }
-run() { { $T "$@" 2>&1 | head -n 120 | mask; } >> "$OUT"; }
-have() { command -v "$1" >/dev/null 2>&1; }
-
-{
-  echo "WiFiReport 1.0  $(date)"
-  echo "Read-only. Please send this file back."
-} >> "$OUT"
-
-sec "kernel"
-run uname -a
-[ -r /proc/version ] && head -c 400 /proc/version >> "$OUT"
-sec "os"
-[ -r /etc/os-release ] && head -n 6 /etc/os-release >> "$OUT"
-sec "user and arch"
-run id
-run uname -m
-sec "USB devices (ids only)"
-for d in /sys/bus/usb/devices/*; do
-  [ -r "$d/idVendor" ] || continue
-  printf '%s %s:%s  %s | %s\n' "$(basename "$d")" "$(cat "$d/idVendor")" "$(cat "$d/idProduct")" \
-    "$(cat "$d/manufacturer" 2>/dev/null)" "$(cat "$d/product" 2>/dev/null)" >> "$OUT"
-done
-have lsusb && { sec "lsusb"; run lsusb; }
-sec "network interfaces (names only)"
-ls /sys/class/net >> "$OUT" 2>&1
-have iw && { sec "iw dev"; run iw dev; }
-have rfkill && { sec "rfkill"; run rfkill list; }
-sec "loaded modules"
-if [ -r /proc/modules ]; then awk '{print $1}' /proc/modules | head -n 150 >> "$OUT"; else echo "no /proc/modules" >> "$OUT"; fi
-sec "module support"
-echo "modules dir: $(ls -d /lib/modules/* 2>&1 | head -n 5 | tr '\n' ' ')" >> "$OUT"
-echo "kernel build dir: $(ls -d /lib/modules/"$(uname -r)"/build 2>&1)" >> "$OUT"
-echo "kernel headers in /usr/src: $(ls /usr/src 2>&1 | head -n 5 | tr '\n' ' ')" >> "$OUT"
-[ -d /lib/modules/"$(uname -r)" ] && { echo "-- wireless modules on disk:" >> "$OUT"; find /lib/modules/"$(uname -r)" \( -name 'cfg80211*' -o -name 'mac80211*' -o -name '*rtl*' -o -name '*rtw*' -o -name '*8821*' -o -name '*8812*' -o -name '*mt76*' -o -name '*88XX*' \) 2>/dev/null | head -n 60 >> "$OUT"; }
-sec "kernel config (wireless related)"
-if [ -r /proc/config.gz ]; then
-  zcat /proc/config.gz 2>/dev/null | grep -E '^(# )?CONFIG_(MODULES|MODVERSIONS|MODULE_SIG|MODULE_FORCE_LOAD|LOCALVERSION|CFG80211|MAC80211|WLAN|WIRELESS|WEXT|RTL|RTW|MT76|USB_NET|USB_USBNET|RFKILL|CRYPTO_(CCM|GCM|CMAC|AES))' | head -n 120 >> "$OUT"
-else
-  echo "/proc/config.gz not present" >> "$OUT"
-  ls /boot 2>&1 | head -n 20 >> "$OUT"
-fi
-sec "firmware folders"
-ls /lib/firmware 2>&1 | head -n 80 >> "$OUT"
-for f in rtlwifi rtw88 rtw89 mediatek rtl_bt; do [ -d "/lib/firmware/$f" ] && { echo "-- /lib/firmware/$f:" >> "$OUT"; ls "/lib/firmware/$f" | head -n 40 >> "$OUT"; }; done
-sec "tools present"
-for t in iw wpa_supplicant wpa_cli rfkill modprobe insmod depmod modinfo lsusb curl wget dhclient dhcpcd gcc make sudo; do
-  printf '%s: %s\n' "$t" "$(command -v $t || echo -)" >> "$OUT"
-done
-sec "kernel log (wifi and usb lines, may be empty without root)"
-{ $T dmesg 2>&1 | grep -iE 'usb|wlan|cfg80211|rtl|rtw|mt76|firmware|8821|8812' | tail -n 60 | mask; } >> "$OUT"
-sec "disk"
-run df -h "$PORTSDIR"
-echo >> "$OUT"
-echo "END OF REPORT" >> "$OUT"
-
-MSG="WiFi report saved: $OUT. Power off, put the card in a PC, and send that file."
-echo "$MSG"
+# Standard PortMaster controller setup (skipped cleanly if not installed).
 if [ -f "$controlfolder/control.txt" ]; then
   # shellcheck disable=SC1091
   source "$controlfolder/control.txt"
-  type pm_message >/dev/null 2>&1 && pm_message "$MSG"
+  [ -f "${controlfolder}/mod_${CFW_NAME}.txt" ] && source "${controlfolder}/mod_${CFW_NAME}.txt"
+  type get_controls >/dev/null 2>&1 && get_controls
 fi
-echo "$MSG" > /dev/tty1 2>/dev/null
-sleep 10
-exit 0
+
+mkdir -p "$GAMEDIR/data"
+LOG="$GAMEDIR/data/launch.log"
+: > "$LOG"
+exec > >(tee -a "$LOG") 2>&1
+
+say() {
+  echo "$*"
+  if type pm_message >/dev/null 2>&1; then pm_message "$*"; else echo "$*" > /dev/tty1 2>/dev/null; fi
+}
+
+finish() {
+  type pm_finish >/dev/null 2>&1 && pm_finish
+}
+
+echo "WiFiReport launch $(date)"
+echo "ports dir: $PORTSDIR  controlfolder: $controlfolder"
+echo "uname: $(uname -a)  device arch: ${DEVICE_ARCH:-unset}"
+echo "SDL2 libs: $( (ldconfig -p 2>/dev/null | grep -i 'libSDL2-2.0' | head -2 | tr '\n' ' ') || true)"
+
+cd "$GAMEDIR" || exit 1
+
+export WIFIREPORT_OUT="$GAMEDIR/WiFi_Report.txt"
+export WIFIREPORT_SCRIPT="$GAMEDIR/collect.sh"
+export SDL_GAMECONTROLLERCONFIG="$sdl_controllerconfig"
+export HOME="${HOME:-/home/ark}"
+export PATH="$PATH:/usr/bin:/bin:/usr/local/bin"
+export SDL_HINT_RENDER_SCALE_QUALITY=0
+
+RAW="${DEVICE_ARCH:-$(uname -m)}"
+case "$RAW" in
+  aarch64|arm64) ARCH=aarch64 ;;
+  armv7l|armv8l|arm|armhf) ARCH=armhf ;;
+  x86_64|amd64) ARCH=x86_64 ;;
+  *) ARCH="$RAW" ;;
+esac
+
+BIN="$GAMEDIR/wifireport.$ARCH"
+if [ ! -f "$BIN" ]; then
+  say "WiFiReport: no program for this CPU ($RAW). Looked for wifireport.$ARCH."
+  sleep 8; finish; exit 1
+fi
+[ -d "$GAMEDIR/libs.$ARCH" ] && export LD_LIBRARY_PATH="$GAMEDIR/libs.$ARCH:$LD_LIBRARY_PATH"
+
+# Some SD card formats drop the executable bit. Run a copy from /tmp then.
+if [ ! -x "$BIN" ]; then
+  chmod +x "$BIN" 2>/dev/null
+fi
+if [ ! -x "$BIN" ]; then
+  cp "$BIN" "/tmp/wifireport.$ARCH" && chmod +x "/tmp/wifireport.$ARCH" && BIN="/tmp/wifireport.$ARCH"
+fi
+echo "binary: $BIN"
+
+if [ -n "$GPTOKEYB" ]; then
+  $GPTOKEYB "$(basename "$BIN")" -c "$GAMEDIR/wifireport.gptk" &
+fi
+type pm_platform_helper >/dev/null 2>&1 && pm_platform_helper "$BIN" >/dev/null 2>&1
+
+# Exit code 3 = SDL could not open a display. Retry once with the DRM driver.
+"$BIN"
+RC=$?
+if [ $RC -eq 3 ] && [ -z "$SDL_VIDEODRIVER" ]; then
+  echo "Default video driver failed, retrying with kmsdrm"
+  SDL_VIDEODRIVER=kmsdrm "$BIN"
+  RC=$?
+fi
+echo "wifireport exited with $RC"
+
+if [ $RC -ne 0 ]; then
+  say "WiFiReport could not start (code $RC). See wifireport/data/launch.log"
+  sleep 6
+fi
+
+finish
+exit $RC

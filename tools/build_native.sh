@@ -8,13 +8,13 @@ set -eu
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/build"
 mkdir -p "$OUT"
-SRC="$ROOT/native/gitroms.c"
+PROGS="gitroms wifireport"
 
 # Stub exporting every SDL_ symbol the program uses.
 STUB="$OUT/sdlstub.c"
 {
   echo "/* generated: link-only SDL2 stub */"
-  grep -oE '\bSDL_[A-Za-z]+\(' "$SRC" | tr -d '(' | sort -u | grep -vE '^SDL_(Event|Window|Renderer|Texture)$' |
+  cat "$ROOT"/native/*.c | grep -oE '\bSDL_[A-Za-z]+\(' | tr -d '(' | sort -u | grep -vE '^SDL_(Event|Window|Renderer|Texture)$' |
     while read -r f; do echo "void *$f(void) { return 0; }"; done
 } > "$STUB"
 
@@ -28,9 +28,11 @@ build() { # name cc [sysroot multiarch-dir]
     -isystem "$("$cc" -print-file-name=include)" -isystem "$sr/usr/include/$ma" -isystem "$sr/usr/include")
   command -v "$cc" >/dev/null || { echo "skip $name ($cc not installed)"; return 0; }
   "$cc" "${sysroot[@]}" -shared -fPIC -Wl,-soname,libSDL2-2.0.so.0 -o "$OUT/libSDL2-stub.$name.so" "$STUB"
-  "$cc" "${sysroot[@]}" $CFLAGS -o "$OUT/gitroms.$name" "$SRC" -L"$OUT" -Wl,--no-as-needed \
-    -l:libSDL2-stub.$name.so 2>&1 | head -20
-  echo "built $OUT/gitroms.$name"
+  for prog in $PROGS; do
+    "$cc" "${sysroot[@]}" $CFLAGS -o "$OUT/$prog.$name" "$ROOT/native/$prog.c" -L"$OUT" -Wl,--no-as-needed \
+      -l:libSDL2-stub.$name.so 2>&1 | head -20
+    echo "built $OUT/$prog.$name"
+  done
 }
 build x86_64 gcc
 "$ROOT/tools/fetch_sysroot.sh"
