@@ -6,8 +6,9 @@ OUT="$1"
 : > "$OUT" 2>/dev/null || OUT="/tmp/WiFi_Report.txt"
 PORTSDIR="$(cd "$(dirname "$0")/.." && pwd)"
 T=""; command -v timeout >/dev/null 2>&1 && T="timeout 5"
-# hide MAC and IPv4 addresses
-mask() { sed -E 's/([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}/xx:xx:xx:xx:xx:xx/g; s/[0-9]{1,3}(\.[0-9]{1,3}){3}/x.x.x.x/g'; }
+# hide MAC and IPv4 addresses and drop any line that mentions an SSID
+mask() { sed -E 's/([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}/xx:xx:xx:xx:xx:xx/g; s/[0-9]{1,3}(\.[0-9]{1,3}){3}/x.x.x.x/g' | grep -vi 'ssid'; }
+# lines mentioning ssid (Wi-Fi network names) are dropped entirely
 sec() { printf '\n==== %s ====\n' "$1" >> "$OUT"; }
 run() { { $T "$@" 2>&1 | head -n 120 | mask; } >> "$OUT"; }
 have() { command -v "$1" >/dev/null 2>&1; }
