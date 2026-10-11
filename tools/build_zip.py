@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""Build dist/GitROMs.zip from port/. Extract the zip into the ports folder."""
+"""Build dist/GitROMs.zip from port/ plus the handheld binaries in build/.
+Run tools/build_native.sh first. Extract the zip into the ports folder."""
 import hashlib, os, sys, zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "port")
 DIST = os.path.join(ROOT, "dist")
+BUILD = os.path.join(ROOT, "build")
+BINARIES = ["aarch64", "armhf"]
 OUT = os.path.join(DIST, "GitROMs.zip")
 SKIP_DIRS = {"data", "__pycache__"}
 FIXED_TIME = (2026, 1, 1, 0, 0, 0)  # reproducible output
@@ -22,6 +25,12 @@ def collect():
 
 def main():
     files = [f for f in collect() if f[0] != "gitroms/MANIFEST.txt"]
+    for arch in BINARIES:
+        src = os.path.join(BUILD, f"gitroms.{arch}")
+        if not os.path.exists(src):
+            sys.exit(f"missing {src}; run tools/build_native.sh")
+        files.append((f"gitroms/gitroms.{arch}", src))
+    files.sort()
     manifest = "\n".join(rel for rel, _ in files) + "\ngitroms/MANIFEST.txt\n"
     os.makedirs(DIST, exist_ok=True)
     with zipfile.ZipFile(OUT, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
@@ -31,7 +40,8 @@ def main():
                 data = data.replace(b"\r\n", b"\n")
             info = zipfile.ZipInfo(rel, FIXED_TIME)
             info.compress_type = zipfile.ZIP_DEFLATED
-            info.external_attr = (0o755 if rel.endswith(".sh") else 0o644) << 16
+            exe = rel.endswith(".sh") or "/gitroms." in rel and rel.rsplit(".", 1)[-1] in BINARIES
+            info.external_attr = (0o755 if exe else 0o644) << 16
             z.writestr(info, data)
     digest = hashlib.sha256(open(OUT, "rb").read()).hexdigest()
     with open(OUT + ".sha256", "w") as f:

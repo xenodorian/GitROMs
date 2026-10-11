@@ -13,24 +13,29 @@ def check(cond, msg):
         fails.append(msg)
 
 
+def have(cmd):
+    return subprocess.run(["which", cmd], capture_output=True).returncode == 0
+
+
 with zipfile.ZipFile(ZIP) as z:
     check(z.testzip() is None, "zip integrity")
     names = z.namelist()
     check("GitROMs.sh" in names, "launcher is at zip root (lands directly in ports/)")
     check(all(n == "GitROMs.sh" or n.startswith("gitroms/") for n in names), "only GitROMs.sh and gitroms/ are packaged")
-    for need in ["gitroms/game/main.lua", "gitroms/game/conf.lua", "gitroms/gitroms.gptk", "gitroms/port.json", "gitroms/README.md"]:
+    for need in ["gitroms/gitroms.aarch64", "gitroms/gitroms.armhf", "gitroms/gitroms.gptk",
+                 "gitroms/gitroms.conf", "gitroms/port.json", "gitroms/README.md"]:
         check(need in names, f"contains {need}")
     check(not any(".." in n or n.startswith("/") for n in names), "no unsafe paths")
-    check(not any(n.endswith((".pyc", ".log", ".part")) or "/data/" in n for n in names), "no build output, logs or runtime data")
+    check(not any(n.endswith((".pyc", ".log", ".part", ".lua")) or "/data/" in n for n in names), "no build output, logs, runtime data or LOVE files")
     sha = open(ZIP + ".sha256").read().split()[0]
     check(sha == hashlib.sha256(open(ZIP, "rb").read()).hexdigest(), "checksum file matches")
-    mode = (z.getinfo("GitROMs.sh").external_attr >> 16) & 0o777
-    check(mode == 0o755, "launcher marked executable in zip")
+    for n in ["GitROMs.sh", "gitroms/gitroms.aarch64", "gitroms/gitroms.armhf"]:
+        check(((z.getinfo(n).external_attr >> 16) & 0o777) == 0o755, f"{n} marked executable")
     allbytes = b""
     for n in names:
         d = z.read(n)
         allbytes += d
-        if n.endswith((".sh", ".lua", ".gptk", ".json", ".md", ".txt")):
+        if n.endswith((".sh", ".gptk", ".json", ".md", ".txt", ".conf")):
             check(b"\r" not in d, f"LF line endings: {n}")
     low = allbytes.lower()
     for bad in [b"chromium", b"firefox", b"webkit", b"github_pat_", b"ghp_", b"authorization: bearer"]:
@@ -38,18 +43,23 @@ with zipfile.ZipFile(ZIP) as z:
     tmp = tempfile.mkdtemp(prefix="gitroms-check-")
     z.extractall(tmp)
 
-sh = os.path.join(tmp, "GitROMs.sh")
-check(subprocess.run(["bash", "-n", sh]).returncode == 0, "launcher passes bash -n")
-if subprocess.run(["which", "luajit"], capture_output=True).returncode == 0:
-    for base, _, fs in os.walk(os.path.join(tmp, "gitroms")):
-        for f in fs:
-            if f.endswith(".lua"):
-                p = os.path.join(base, f)
-                r = subprocess.run(["luajit", "-bl", p], capture_output=True)
-                check(r.returncode == 0, f"lua syntax: {os.path.relpath(p, tmp)}")
-else:
-    print("SKIP lua syntax (luajit not installed)")
+check(subprocess.run(["bash", "-n", os.path.join(tmp, "GitROMs.sh")]).returncode == 0, "launcher passes bash -n")
+
+for arch, objdump, machine in [("aarch64", "aarch64-linux-gnu-objdump", "aarch64"), ("armhf", "arm-linux-gnueabihf-objdump", "arm")]:
+    path = os.path.join(tmp, "gitroms", f"gitroms.{arch}")
+    head = open(path, "rb").read(20)
+    em = int.from_bytes(head[18:20], "little")
+    check(head[:4] == b"\x7fELF" and em == {"aarch64": 183, "arm": 40}[machine], f"{arch} binary is a real ELF for {machine}")
+    if have(objdump):
+        out = subprocess.run([objdump, "-T", path], capture_output=True, text=True).stdout
+        vers = sorted({tuple(map(int, v.split("."))) for v in re.findall(r"GLIBC_([0-9.]+)", out)})
+        check(bool(vers) and max(vers) <= (2, 17), f"{arch} needs glibc <= 2.17 (found {['.'.join(map(str, v)) for v in vers]})")
+        needed = subprocess.run([objdump.replace("objdump", "readelf"), "-d", path], capture_output=True, text=True).stdout
+        libs = re.findall(r"Shared library: \[(.*?)\]", needed)
+        check(sorted(libs) == ["libSDL2-2.0.so.0", "libc.so.6"], f"{arch} links only libc and libSDL2 ({libs})")
+    else:
+        print(f"SKIP glibc check for {arch} ({objdump} not installed)")
 
 print("\nRESULT:", "FAILED" if fails else "all static checks passed")
-print("Note: these are PC-only checks. Launch, display, input and Wi-Fi on a real R36S are NOT covered.")
+print("Note: PC-only checks. Launch, display, input and Wi-Fi on a real R36S are NOT covered.")
 sys.exit(1 if fails else 0)

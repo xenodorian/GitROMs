@@ -1,5 +1,5 @@
 #!/bin/bash
-# GitROMs: PortMaster-style launcher for ArkOS (R36S).
+# GitROMs: PortMaster-style launcher for ArkOS (R36S), native SDL2 build.
 # This file must sit directly in the ports folder, next to the gitroms folder.
 # That is what makes ArkOS list it under Ports.
 
@@ -37,13 +37,14 @@ say() {
 }
 
 finish() {
-  [ -n "$MOUNTED" ] && ${ESUDO} umount "$MOUNTED" 2>/dev/null
   type pm_finish >/dev/null 2>&1 && pm_finish
 }
 
 echo "GitROMs launch $(date)"
 echo "ports dir: $PORTSDIR  controlfolder: $controlfolder"
-echo "arch: $(uname -m)  device arch: ${DEVICE_ARCH:-unset}"
+echo "uname: $(uname -a)  device arch: ${DEVICE_ARCH:-unset}"
+echo "SDL2 libs: $( (ldconfig -p 2>/dev/null | grep -i 'libSDL2-2.0' | head -2 | tr '\n' ' ') || true)"
+echo "curl: $(command -v curl || echo MISSING)"
 
 cd "$GAMEDIR" || exit 1
 
@@ -51,67 +52,55 @@ cd "$GAMEDIR" || exit 1
 ROMS_PARENT="$(dirname "$PORTSDIR")"
 [ -d "$ROMS_PARENT" ] && export GITROMS_ROMS="$ROMS_PARENT"
 export GITROMS_HOME="$GAMEDIR/data"
+export GITROMS_CONF="$GAMEDIR/gitroms.conf"
 export SDL_GAMECONTROLLERCONFIG="$sdl_controllerconfig"
 export HOME="${HOME:-/home/ark}"
+export PATH="$PATH:/usr/bin:/bin:/usr/local/bin"
+export SDL_HINT_RENDER_SCALE_QUALITY=0
 
-ARCH="${DEVICE_ARCH:-$(uname -m)}"
-case "$ARCH" in arm64) ARCH=aarch64 ;; amd64) ARCH=x86_64 ;; esac
+RAW="${DEVICE_ARCH:-$(uname -m)}"
+case "$RAW" in
+  aarch64|arm64) ARCH=aarch64 ;;
+  armv7l|armv8l|arm|armhf) ARCH=armhf ;;
+  x86_64|amd64) ARCH=x86_64 ;;
+  *) ARCH="$RAW" ;;
+esac
 
-if ! command -v curl >/dev/null 2>&1; then
-  say "GitROMs needs curl, which was not found on this system."
-  sleep 5; finish; exit 1
-fi
-
-# Find a LOVE 11.x runtime, in this order:
-#  1. a binary bundled in gitroms/ (love.aarch64 or love.x86_64)
-#  2. PortMaster's shared runtime love_11.5.squashfs
-#  3. a system-wide love
-LOVE_BIN=""
-MOUNTED=""
-runtime="love_11.5"
-
-if [ -x "$GAMEDIR/love.$ARCH" ]; then
-  LOVE_BIN="$GAMEDIR/love.$ARCH"
-  [ -d "$GAMEDIR/libs.$ARCH" ] && export LD_LIBRARY_PATH="$GAMEDIR/libs.$ARCH:$LD_LIBRARY_PATH"
-else
-  sq="$controlfolder/libs/${runtime}.squashfs"
-  if [ ! -f "$sq" ] && [ -x "$controlfolder/harbourmaster" ]; then
-    echo "Runtime $runtime missing, asking PortMaster to fetch it (needs Wi-Fi)."
-    ${ESUDO} "$controlfolder/harbourmaster" --quiet --no-check runtime_check "${runtime}.squashfs"
-  fi
-  if [ -f "$sq" ]; then
-    love_dir="/tmp/love"
-    [ "$PM_CAN_MOUNT" != "N" ] && ${ESUDO} umount "$love_dir" 2>/dev/null
-    ${ESUDO} mkdir -p "$love_dir"
-    if ${ESUDO} mount "$sq" "$love_dir"; then
-      MOUNTED="$love_dir"
-      for c in "$love_dir/love" "$love_dir/bin/love"; do
-        [ -x "$c" ] && LOVE_BIN="$c" && break
-      done
-      [ -d "$love_dir/libs.$ARCH" ] && export LD_LIBRARY_PATH="$love_dir/libs.$ARCH:$LD_LIBRARY_PATH"
-    else
-      echo "Could not mount $sq"
-    fi
-  fi
-fi
-if [ -z "$LOVE_BIN" ]; then
-  LOVE_BIN="$(command -v love || command -v love2d || true)"
-fi
-
-if [ -z "$LOVE_BIN" ]; then
-  say "GitROMs: no LOVE runtime found. Open PortMaster once with Wi-Fi on so it can download love_11.5, then try again. Details: gitroms/data/launch.log"
+BIN="$GAMEDIR/gitroms.$ARCH"
+if [ ! -f "$BIN" ]; then
+  say "GitROMs: no program for this CPU ($RAW). Looked for gitroms.$ARCH in gitroms/."
   sleep 8; finish; exit 1
 fi
-echo "love binary: $LOVE_BIN"
+[ -d "$GAMEDIR/libs.$ARCH" ] && export LD_LIBRARY_PATH="$GAMEDIR/libs.$ARCH:$LD_LIBRARY_PATH"
+
+# Some SD card formats drop the executable bit. Run a copy from /tmp then.
+if [ ! -x "$BIN" ]; then
+  chmod +x "$BIN" 2>/dev/null
+fi
+if [ ! -x "$BIN" ]; then
+  cp "$BIN" "/tmp/gitroms.$ARCH" && chmod +x "/tmp/gitroms.$ARCH" && BIN="/tmp/gitroms.$ARCH"
+fi
+echo "binary: $BIN"
 
 if [ -n "$GPTOKEYB" ]; then
-  $GPTOKEYB "love" -c "$GAMEDIR/gitroms.gptk" &
+  $GPTOKEYB "$(basename "$BIN")" -c "$GAMEDIR/gitroms.gptk" &
 fi
-type pm_platform_helper >/dev/null 2>&1 && pm_platform_helper "$LOVE_BIN" >/dev/null 2>&1
+type pm_platform_helper >/dev/null 2>&1 && pm_platform_helper "$BIN" >/dev/null 2>&1
 
-"$LOVE_BIN" "$GAMEDIR/game"
+# Exit code 3 = SDL could not open a display. Retry once with the DRM driver.
+"$BIN"
 RC=$?
-echo "love exited with $RC"
+if [ $RC -eq 3 ] && [ -z "$SDL_VIDEODRIVER" ]; then
+  echo "Default video driver failed, retrying with kmsdrm"
+  SDL_VIDEODRIVER=kmsdrm "$BIN"
+  RC=$?
+fi
+echo "gitroms exited with $RC"
+
+if [ $RC -ne 0 ]; then
+  say "GitROMs could not start (code $RC). See gitroms/data/launch.log and gitroms.log"
+  sleep 6
+fi
 
 finish
 exit $RC
