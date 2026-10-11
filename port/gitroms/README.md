@@ -24,6 +24,8 @@ tokens, no extra runtime to install.
 - D-pad up/down: move. Left/right or L1/R1: page.
 - A: open folder / pick file / confirm. B: back / cancel.
 - Select: refresh the list. Start: downloads history.
+- X: system info screen (kernel, USB devices, Wi-Fi support, firmware). It also
+  saves `gitroms/data/SystemInfo.txt`. Read-only; changes nothing.
 - On the save screen, left/right changes the destination system folder.
 
 Files go to `<roms>/<system>/`. Existing files are never overwritten (you can

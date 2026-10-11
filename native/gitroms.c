@@ -76,15 +76,15 @@ void *SDL_GameControllerOpen(int);
 #define MAXITEMS 1500
 #define ROWS 12
 #define ROWH 30
-#define VERSION "3.0"
+#define VERSION "3.1"
 
 static uint32_t fb[VW * VH];
 
 enum { K_REPO, K_DIR, K_FILE };
 enum { SC_BUSY, SC_LIST, SC_CONFIRM, SC_CONFLICT, SC_DOWNLOAD, SC_RESULT,
-       SC_ERROR, SC_HISTORY, SC_EXIT };
+       SC_ERROR, SC_HISTORY, SC_EXIT, SC_SYSINFO };
 enum { A_NONE, A_UP, A_DOWN, A_LEFT, A_RIGHT, A_OK, A_BACK, A_START, A_SELECT,
-       A_PGUP, A_PGDN };
+       A_PGUP, A_PGDN, A_INFO };
 enum { T_NONE, T_REPOS, T_DIR, T_DL };
 
 static const char *EXTS[] = {
@@ -977,6 +977,65 @@ static void update_task(uint32_t now) {
 	parse_page();
 }
 
+/* ---- system info (read-only shell collector, shown on screen) ---- */
+#define SI_MAX 700
+static char si_lines[SI_MAX][48];
+static int si_n, si_top, si_running;
+static pid_t sysi_pid;
+static char si_out[460];
+
+static void si_start(void) {
+	const char *script = getenv("GITROMS_COLLECT");
+	si_n = 0;
+	si_top = 0;
+	if (!script || access(script, R_OK) != 0) {
+		scpy(si_lines[0], sizeof si_lines[0], "collect.sh not found.");
+		si_n = 1;
+		si_running = 0;
+		return;
+	}
+	snprintf(si_out, sizeof si_out, "%s/SystemInfo.txt", g_home);
+	sysi_pid = fork();
+	if (sysi_pid == 0) {
+		execlp("sh", "sh", script, si_out, (char *)NULL);
+		_exit(127);
+	}
+	si_running = sysi_pid > 0;
+}
+
+static void si_load(void) {
+	FILE *f = fopen(si_out, "rb");
+	char buf[1024];
+	si_n = 0;
+	if (!f) { scpy(si_lines[0], sizeof si_lines[0], "No report was written."); si_n = 1; return; }
+	while (si_n < SI_MAX && fgets(buf, sizeof buf, f)) {
+		size_t n = strlen(buf), off = 0;
+		while (n && (buf[n - 1] == '\n' || buf[n - 1] == '\r')) buf[--n] = 0;
+		do {
+			size_t take = n - off > 38 ? 38 : n - off;
+			if (si_n >= SI_MAX) break;
+			for (size_t i = 0; i < take; i++) {
+				unsigned char c = (unsigned char)buf[off + i];
+				si_lines[si_n][i] = (c < 32 || c > 126) ? '?' : (char)c;
+			}
+			si_lines[si_n][take] = 0;
+			si_n++;
+			off += take;
+		} while (off < n);
+	}
+	fclose(f);
+}
+
+static void si_poll(void) {
+	if (!si_running) return;
+	int st;
+	if (waitpid(sysi_pid, &st, WNOHANG) == sysi_pid) { si_running = 0; si_load(); logf_("system info written to %s", si_out); }
+}
+
+static void si_stop(void) {
+	if (si_running) { kill(sysi_pid, SIGTERM); waitpid(sysi_pid, NULL, 0); si_running = 0; }
+}
+
 /* ---------------------------------------------------------------- input */
 static void do_refresh(void) {
 	if (!have_cur) return;
@@ -1022,6 +1081,7 @@ static void act(int a) {
 		else if (a == A_BACK) go_back();
 		else if (a == A_SELECT) do_refresh();
 		else if (a == A_START) { prev_screen = SC_LIST; hist_scroll = 0; screen = SC_HISTORY; }
+		else if (a == A_INFO) { prev_screen = SC_LIST; if (!si_n) si_start(); screen = SC_SYSINFO; }
 		else if (a == A_OK && nitems) {
 			Item *it = &items[cur.sel];
 			Frame f;
@@ -1080,6 +1140,16 @@ static void act(int a) {
 		else if (a == A_DOWN && hist_scroll < nhist - 10) hist_scroll++;
 		else if (a == A_BACK || a == A_START) screen = prev_screen;
 		break;
+	case SC_SYSINFO: {
+		int rows = 12, mx = si_n > rows ? si_n - rows : 0;
+		if (a == A_UP && si_top > 0) si_top--;
+		else if (a == A_DOWN && si_top < mx) si_top++;
+		else if (a == A_PGUP || a == A_LEFT) si_top = si_top > 10 ? si_top - 10 : 0;
+		else if (a == A_PGDN || a == A_RIGHT) si_top = si_top + 10 < mx ? si_top + 10 : mx;
+		else if (a == A_SELECT && !si_running) si_start();
+		else if (a == A_BACK || a == A_INFO) { si_stop(); screen = prev_screen; }
+		break;
+	}
 	case SC_EXIT:
 		if (a == A_OK) g_run = 0;
 		else if (a == A_BACK) screen = have_cur ? SC_LIST : SC_ERROR;
@@ -1089,7 +1159,7 @@ static void act(int a) {
 
 static uint32_t last_act_at[16];
 static void fire(int a, int repeated, uint32_t now) {
-	if (a <= A_NONE || a > A_PGDN) return;
+	if (a <= A_NONE || a > A_INFO) return;
 	/* gptokeyb keys and controller events can both arrive for one press */
 	if (!repeated && last_act_at[a] && now - last_act_at[a] < 50) return;
 	last_act_at[a] = now;
@@ -1104,13 +1174,14 @@ static int key_action(int sc) {
 	case 40: case 88: return A_START;        /* return, keypad enter */
 	case 43: return A_SELECT;                /* tab */
 	case 20: return A_PGUP; case 8: return A_PGDN; /* q, e */
+	case 6: return A_INFO;                   /* c (pad X via gptokeyb) */
 	}
 	return A_NONE;
 }
 static int pad_action(int b) {
 	switch (b) {
 	case 0: return A_OK; case 1: return A_BACK; case 6: return A_START;
-	case 4: case 3: return A_SELECT; case 9: return A_PGUP; case 10: return A_PGDN;
+	case 2: return A_INFO; case 4: case 3: return A_SELECT; case 9: return A_PGUP; case 10: return A_PGDN;
 	case 11: return A_UP; case 12: return A_DOWN; case 13: return A_LEFT; case 14: return A_RIGHT;
 	}
 	return A_NONE;
@@ -1245,7 +1316,7 @@ static void draw_list(void) {
 	}
 	if (cur.kind == K_REPO && nitems && items[cur.sel].desc[0])
 		text_fit(16, 420, items[cur.sel].desc, C_MUTED, 2, VW - 32);
-	footer("A open  B back  SEL refresh  START log");
+	footer("A open B back X info START log SEL ref");
 }
 
 static void draw_screen(uint32_t now) {
@@ -1337,6 +1408,21 @@ static void draw_screen(uint32_t now) {
 		}
 		footer("UP/DOWN scroll  B back");
 		break;
+	case SC_SYSINFO: {
+		int rows = 12;
+		if (si_running) {
+			header("System info", NULL);
+			text(32, 150, "Collecting information...", C_FG, 2);
+			progress(120, 210, VW - 240, -1, now);
+			footer("B back");
+			break;
+		}
+		snprintf(buf, sizeof buf, "System info %d/%d", si_n ? si_top + 1 : 0, si_n);
+		header(buf, NULL);
+		for (int i = 0; i < rows && si_top + i < si_n; i++) text(12, 46 + i * 32, si_lines[si_top + i], C_FG, 2);
+		footer("UP/DN scroll L/R page SEL redo B back");
+		break;
+	}
 	case SC_EXIT:
 		header("Quit GitROMs?", NULL);
 		text(32, 100, "Press A to quit, B to stay.", C_FG, 2);
@@ -1352,8 +1438,8 @@ static uint32_t twait_until;
 static char *tshot;
 
 static int act_from_name(const char *n) {
-	static const char *names[] = {"", "up", "down", "left", "right", "confirm", "cancel", "start", "select", "pgup", "pgdn"};
-	for (int i = 1; i <= A_PGDN; i++) if (!strcmp(n, names[i])) return i;
+	static const char *names[] = {"", "up", "down", "left", "right", "confirm", "cancel", "start", "select", "pgup", "pgdn", "info"};
+	for (int i = 1; i <= A_INFO; i++) if (!strcmp(n, names[i])) return i;
 	return 0;
 }
 
@@ -1506,6 +1592,7 @@ int main(void) {
 			}
 		}
 		update_task(t0);
+		si_poll();
 		test_step(t0);
 		draw_screen(t0);
 		if (tshot) { write_ppm(tshot); tshot = NULL; }
@@ -1517,6 +1604,7 @@ int main(void) {
 		if (spent < 33) SDL_Delay(33 - spent);
 	}
 
+	si_stop();
 	if (task_active()) {
 		job_cancel(&task.job);
 		if (task.type == T_DL) remove(dl.part);

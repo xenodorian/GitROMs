@@ -8,7 +8,7 @@ set -eu
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/build"
 mkdir -p "$OUT"
-PROGS="gitroms wifireport"
+PROGS="gitroms"
 
 # Stub exporting every SDL_ symbol the program uses.
 STUB="$OUT/sdlstub.c"
