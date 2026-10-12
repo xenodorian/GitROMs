@@ -25,6 +25,6 @@ sysroot). Not yet run on a real R36S. See [docs/DECISIONS.md](docs/DECISIONS.md)
 - `tools/build_native.sh` cross-builds aarch64, armhf and x86_64 into `build/`
 - `tools/fetch_sysroot.sh` downloads Ubuntu 20.04 glibc 2.31 so binaries run on older ArkOS
 - `tools/build_zip.py` builds `dist/GitROMs.zip`
-- `tests/` `check_package.py` (static), `smoke_test.sh` and `update_test.sh` (headless runs), `mock_github.py`
+- `tests/` `check_package.py` (static), `smoke_test.sh` and `update_test.sh`, `real_release_test.sh` (headless runs; the last one is online and downloads a real release asset), `mock_github.py`
 - `port-love/` the LOVE version. Superseded: it needs a LOVE runtime the device lacked.
 - `GitROMs/` the first Python/pygame attempt. Incomplete (`main.py` never committed).

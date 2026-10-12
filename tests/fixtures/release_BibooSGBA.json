@@ -1,0 +1,87 @@
+{
+ "tag_name": "latest",
+ "target_commitish": "d6f18d292588b7c58a79ea177d0e0fb7f4d6c334",
+ "name": "Latest build",
+ "body": "Rolling build, replaced on every publish.",
+ "draft": false,
+ "prerelease": false,
+ "immutable": false,
+ "id": 410960449,
+ "created_at": "2026-10-12T20:03:48Z",
+ "published_at": "2026-10-12T20:07:26Z",
+ "assets": [
+  {
+   "id": 634856322,
+   "url": "https://api.github.com/repos/xenodorian/BibooSGBA/releases/assets/634856322",
+   "name": "parry-perry-arkos-aarch64.zip",
+   "label": "",
+   "state": "uploaded",
+   "content_type": "application/zip",
+   "size": 49078868,
+   "download_count": 0,
+   "created_at": "2026-10-12T20:07:29Z",
+   "updated_at": "2026-10-12T20:07:29Z",
+   "browser_download_url": "https://github.com/xenodorian/BibooSGBA/releases/download/latest/parry-perry-arkos-aarch64.zip",
+   "uploader": {
+    "login": "github-actions[bot]",
+    "id": 41898282,
+    "type": "Bot",
+    "site_admin": false,
+    "url": "https://api.github.com/users/github-actions%5Bbot%5D"
+   },
+   "node_id": "RA_x",
+   "digest": "sha256:3a95de3bb10854be2d50467e059950d6fc79aea73bd708553e5ad8a00c1c9ba5"
+  },
+  {
+   "id": 634856324,
+   "url": "https://api.github.com/repos/xenodorian/BibooSGBA/releases/assets/634856324",
+   "name": "parry-perry-native-arkos-aarch64.zip",
+   "label": "",
+   "state": "uploaded",
+   "content_type": "application/zip",
+   "size": 20593555,
+   "download_count": 0,
+   "created_at": "2026-10-12T20:07:28Z",
+   "updated_at": "2026-10-12T20:07:28Z",
+   "browser_download_url": "https://github.com/xenodorian/BibooSGBA/releases/download/latest/parry-perry-native-arkos-aarch64.zip",
+   "uploader": {
+    "login": "github-actions[bot]",
+    "id": 41898282,
+    "type": "Bot",
+    "site_admin": false,
+    "url": "https://api.github.com/users/github-actions%5Bbot%5D"
+   },
+   "node_id": "RA_x",
+   "digest": "sha256:716d7bbaa84866665f949f269500c3486eaf45c59b1ba94161b4c71b08bb927c"
+  },
+  {
+   "id": 634856327,
+   "url": "https://api.github.com/repos/xenodorian/BibooSGBA/releases/assets/634856327",
+   "name": "parry-perry.sgba",
+   "label": "",
+   "state": "uploaded",
+   "content_type": "application/octet-stream",
+   "size": 19110700,
+   "download_count": 0,
+   "created_at": "2026-10-12T20:07:28Z",
+   "updated_at": "2026-10-12T20:07:28Z",
+   "browser_download_url": "https://github.com/xenodorian/BibooSGBA/releases/download/latest/parry-perry.sgba",
+   "uploader": {
+    "login": "github-actions[bot]",
+    "id": 41898282,
+    "type": "Bot",
+    "site_admin": false,
+    "url": "https://api.github.com/users/github-actions%5Bbot%5D"
+   },
+   "node_id": "RA_x",
+   "digest": "sha256:b187b1d7c4eda1b89333f1acbbd5e4ab290ccc7b3bb30e19de72a534c88b5c91"
+  }
+ ],
+ "author": {
+  "login": "github-actions[bot]",
+  "id": 41898282,
+  "type": "Bot",
+  "site_admin": false,
+  "url": "https://api.github.com/users/github-actions%5Bbot%5D"
+ }
+}

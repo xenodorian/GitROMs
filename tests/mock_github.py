@@ -10,6 +10,8 @@ VER = 0  # bumped via GET /__bump to simulate new commits and a new release buil
 
 REPOS = [{"name": f"filler{i}", "description": None, "default_branch": "main",
           "owner": {"login": "xenodorian"}} for i in range(100)]
+REPOS[0] = {"name": "BibooSGBA", "description": "real release fixture", "default_branch": "main",
+            "owner": {"login": "xenodorian"}}  # first in the list; the rest are fillers
 REPOS += [
     {"name": "GBA-Roms", "description": "My homebrew é roms", "default_branch": "main", "owner": {"login": "xenodorian"}},
     {"name": "Empty", "description": "nothing", "default_branch": "main", "owner": {"login": "xenodorian"}},
@@ -21,6 +23,7 @@ TREE = {
         "hacks": [("file", "x.zip", 1234), ("file", "photo.png", 5)],
     },
     "Empty": {"": []},
+    "BibooSGBA": {"": []},
 }
 
 class H(BaseHTTPRequestHandler):
@@ -44,6 +47,9 @@ class H(BaseHTTPRequestHandler):
             VER += 1
             return self.send(200, str(VER).encode(), "text/plain")
         if p.startswith("/repos/") and p.endswith("/releases/latest"):
+            fx = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", f"release_{p.split('/')[3]}.json")
+            if os.path.exists(fx):
+                return self.send(200, open(fx, "rb").read())
             if p.split("/")[3] != "GBA-Roms":
                 return self.send(404, b'{"message":"Not Found"}')
             size = 20000 + VER

@@ -880,6 +880,7 @@ static void parse_page(void) {
 			sanitize_text(it.desc);
 			acc_add(&it);
 		}
+		logf_("release %s: %d usable assets", tag ? tag : "?", task.nacc);
 		j_free(root);
 		finish_load();
 		return;
@@ -1371,6 +1372,19 @@ static void text_fit(int x, int y, const char *s, uint32_t c, int sc, int maxw) 
 	text(x, y, buf, c, sc);
 }
 
+/* Like text_fit, but keeps the end of the name (the part that tells builds apart). */
+static void text_fit_mid(int x, int y, const char *s, uint32_t c, int sc, int maxw) {
+	int cap = maxw / (8 * sc), n = (int)strlen(s);
+	if (n <= cap || cap < 16) { text_fit(x, y, s, c, sc, maxw); return; }
+	if (cap > 190) cap = 190;
+	char buf[200];
+	int tail = 10, head = cap - 3 - tail;
+	memcpy(buf, s, (size_t)head);
+	memcpy(buf + head, "...", 3);
+	memcpy(buf + head + 3, s + n - tail, (size_t)tail + 1);
+	text(x, y, buf, c, sc);
+}
+
 static int text_wrap(int x, int y, const char *s, uint32_t c, int sc, int maxw, int maxlines) {
 	int cpl = maxw / (8 * sc), i = 0, line = 0;
 	char buf[200];
@@ -1440,7 +1454,7 @@ static void draw_list(void) {
 		uint32_t fg = sel ? C_INK : C_FG;
 		char nm[220];
 		if (it->kind == K_FILE) {
-			text_fit(16, y + 6, it->name, fg, 2, VW - 236);
+			text_fit_mid(16, y + 6, it->name, fg, 2, VW - 236);
 			char h[32];
 			human(h, sizeof h, it->size);
 			int hw = (int)strlen(h) * 16;
