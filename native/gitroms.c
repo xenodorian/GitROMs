@@ -76,16 +76,17 @@ void *SDL_GameControllerOpen(int);
 #define MAXITEMS 1500
 #define ROWS 12
 #define ROWH 30
-#define VERSION "3.1"
+#define VERSION "3.2"
 
 static uint32_t fb[VW * VH];
 
-enum { K_REPO, K_DIR, K_FILE };
+enum { K_REPO, K_DIR, K_FILE, K_REL };
+#define FK_REL 2 /* frame kind: latest-release asset list */
 enum { SC_BUSY, SC_LIST, SC_CONFIRM, SC_CONFLICT, SC_DOWNLOAD, SC_RESULT,
        SC_ERROR, SC_HISTORY, SC_EXIT, SC_SYSINFO };
 enum { A_NONE, A_UP, A_DOWN, A_LEFT, A_RIGHT, A_OK, A_BACK, A_START, A_SELECT,
        A_PGUP, A_PGDN, A_INFO };
-enum { T_NONE, T_REPOS, T_DIR, T_DL };
+enum { T_NONE, T_REPOS, T_DIR, T_DL, T_REL };
 
 static const char *EXTS[] = {
 	".nes", ".smc", ".sfc", ".gba", ".sgba", ".gbc", ".gb", ".md", ".gen",
@@ -448,7 +449,7 @@ typedef struct {
 	char out[600], err[640], errtext[200];
 } Job;
 
-static int job_start(Job *j, const char *url, const char *out, const char *errpath, int maxtime) {
+static int job_start(Job *j, const char *url, const char *out, const char *errpath, int maxtime, int api) {
 	memset(j, 0, sizeof *j);
 	scpy(j->out, sizeof j->out, out);
 	scpy(j->err, sizeof j->err, errpath);
@@ -464,7 +465,7 @@ static int job_start(Job *j, const char *url, const char *out, const char *errpa
 		execlp("curl", "curl", "-sS", "-L", "-f", "--connect-timeout", "15",
 		       "--max-time", mt, "--retry", "2", "--retry-delay", "2",
 		       "-A", "GitROMs-R36S/" VERSION,
-		       "-H", "Accept: application/vnd.github+json",
+		       "-H", api ? "Accept: application/vnd.github+json" : "Accept: */*",
 		       "-o", j->out, url, (char *)NULL);
 		_exit(127);
 	}
@@ -529,7 +530,7 @@ static void explain(const Job *j, char *out, size_t n) {
 /* ------------------------------------------------------------ app state */
 typedef struct {
 	int kind;
-	char name[200], raw[260], path[400], url[700], desc[120], branch[64];
+	char name[200], raw[260], path[400], url[700], desc[120], branch[64], token[96];
 	long long size;
 } Item;
 
@@ -570,16 +571,77 @@ static struct {
 } task;
 
 /* confirm / download */
+/* ---- installed-file manifest: lets the list show which files have updates ---- */
+typedef struct { char repo[100], remote[400], token[96], sys[24], name[260]; } Inst;
+#define MAXINST 500
+static Inst inst[MAXINST];
+static int ninst;
+static char g_instpath[440];
+
+static void inst_load(void) {
+	ninst = 0;
+	char *buf = read_file(g_instpath, 256 * 1024, NULL);
+	if (!buf) return;
+	for (char *line = strtok(buf, "\n"); line && ninst < MAXINST; line = strtok(NULL, "\n")) {
+		char *f[5];
+		int k = 0;
+		char *p = line;
+		while (k < 5) {
+			f[k++] = p;
+			char *t = strchr(p, '\t');
+			if (!t) break;
+			*t = 0;
+			p = t + 1;
+		}
+		if (k < 5) continue;
+		Inst *e = &inst[ninst++];
+		scpy(e->repo, sizeof e->repo, f[0]);
+		scpy(e->remote, sizeof e->remote, f[1]);
+		scpy(e->token, sizeof e->token, f[2]);
+		scpy(e->sys, sizeof e->sys, f[3]);
+		scpy(e->name, sizeof e->name, f[4]);
+	}
+	free(buf);
+}
+
+static Inst *inst_find(const char *repo, const char *remote) {
+	for (int i = ninst - 1; i >= 0; i--)
+		if (!strcmp(inst[i].repo, repo) && !strcmp(inst[i].remote, remote)) return &inst[i];
+	return NULL;
+}
+
+static void inst_record(const Inst *n) {
+	int at = -1;
+	for (int i = 0; i < ninst; i++)
+		if (!strcmp(inst[i].repo, n->repo) && !strcmp(inst[i].remote, n->remote) &&
+		    !strcmp(inst[i].sys, n->sys) && !strcmp(inst[i].name, n->name)) at = i;
+	if (at < 0) {
+		if (ninst >= MAXINST) { memmove(&inst[0], &inst[1], (MAXINST - 1) * sizeof inst[0]); ninst--; }
+		at = ninst++;
+	}
+	inst[at] = *n;
+	char tmp[460];
+	snprintf(tmp, sizeof tmp, "%s.tmp", g_instpath);
+	FILE *f = fopen(tmp, "wb");
+	if (!f) return;
+	for (int i = 0; i < ninst; i++)
+		fprintf(f, "%s\t%s\t%s\t%s\t%s\n", inst[i].repo, inst[i].remote, inst[i].token, inst[i].sys, inst[i].name);
+	fclose(f);
+	rename(tmp, g_instpath);
+}
+
 static struct {
 	Item item;
 	int sys_idx;
-	char name[260], copy_name[300];
+	char name[260], copy_name[300], repo[100];
 	int conflict_sel;
+	int has_inst, upd;
 } cf;
 static struct {
 	char name[300], sys[24], part[800], final[800];
 	long long total, got;
 	uint32_t poll_at;
+	int replace, existed;
 } dl;
 static struct { int ok; char text[400], note[160]; } result;
 
@@ -671,7 +733,9 @@ static void set_list(const Frame *f, int keep_sel) {
 
 static int item_cmp(const void *a, const void *b) {
 	const Item *x = a, *y = b;
-	if (x->kind != y->kind) return x->kind == K_DIR ? -1 : 1;
+	int rx = x->kind == K_REL ? 0 : x->kind == K_DIR ? 1 : 2;
+	int ry = y->kind == K_REL ? 0 : y->kind == K_DIR ? 1 : 2;
+	if (rx != ry) return rx < ry ? -1 : 1;
 	return strcasecmp(x->name, y->name);
 }
 
@@ -682,6 +746,7 @@ static int cache_next;
 
 static void frame_key(const Frame *f, char *out, size_t n) {
 	if (f->kind == K_REPO) snprintf(out, n, "repos:%s", g_user);
+	else if (f->kind == FK_REL) snprintf(out, n, "rel:%s", f->repo);
 	else snprintf(out, n, "dir:%s@%s:%s", f->repo, f->branch, f->path);
 }
 static int cache_find(const char *key) {
@@ -713,6 +778,8 @@ static void start_fetch(void) {
 	char url[900], ep[420];
 	if (task.type == T_REPOS) {
 		snprintf(url, sizeof url, "%s/users/%s/repos?per_page=100&sort=updated&type=owner&page=%d", g_api, g_user, task.page);
+	} else if (task.type == T_REL) {
+		snprintf(url, sizeof url, "%s/repos/%s/releases/latest", g_api, task.target.repo);
 	} else {
 		url_path(ep, sizeof ep, task.target.path);
 		char br[200];
@@ -722,7 +789,7 @@ static void start_fetch(void) {
 	}
 	logf_("GET %s", url);
 	remove(resp_path);
-	if (!job_start(&task.job, url, resp_path, resp_err, 40)) {
+	if (!job_start(&task.job, url, resp_path, resp_err, 40, 1)) {
 		task.type = T_NONE;
 		show_error("Could not start curl.", 0);
 	}
@@ -757,8 +824,9 @@ static void begin_load(const Frame *f, int mode, int keep_sel, int force) {
 	task.cancel = 0;
 	task.target = *f;
 	task.page = 1;
-	task.type = f->kind == K_REPO ? T_REPOS : T_DIR;
+	task.type = f->kind == K_REPO ? T_REPOS : f->kind == FK_REL ? T_REL : T_DIR;
 	if (f->kind == K_REPO) snprintf(busy_label, sizeof busy_label, "Loading %s repositories...", g_user);
+	else if (f->kind == FK_REL) snprintf(busy_label, sizeof busy_label, "Loading latest release...");
 	else snprintf(busy_label, sizeof busy_label, "Loading %s...", f->path[0] ? f->path : f->repo);
 	screen = SC_BUSY;
 	start_fetch();
@@ -790,6 +858,32 @@ static void parse_page(void) {
 	J *root = json_parse(body, n);
 	free(body);
 	if (!root) { task.type = T_NONE; show_error("GitHub sent a response I could not read.", 0); return; }
+	if (task.type == T_REL) {
+		J *assets = jget(root, "assets");
+		const char *tag = jstr(root, "tag_name");
+		if (!assets || assets->t != 4) { j_free(root); task.type = T_NONE; show_error("Unexpected reply from GitHub.", 0); return; }
+		for (J *e = assets->kids; e; e = e->next) {
+			const char *name = jstr(e, "name"), *url = jstr(e, "browser_download_url");
+			if (!name || !url || !visible_file(name)) continue;
+			Item it;
+			memset(&it, 0, sizeof it);
+			it.kind = K_FILE;
+			scpy(it.name, sizeof it.name, name);
+			sanitize_text(it.name);
+			scpy(it.raw, sizeof it.raw, name);
+			snprintf(it.path, sizeof it.path, "release/%s", name);
+			scpy(it.url, sizeof it.url, url);
+			J *sz = jget(e, "size"), *id = jget(e, "id");
+			it.size = (sz && sz->t == 2) ? (long long)sz->n : 0;
+			snprintf(it.token, sizeof it.token, "%.0f:%s", (id && id->t == 2) ? id->n : 0.0, jstr(e, "updated_at") ? jstr(e, "updated_at") : "");
+			scpy(it.desc, sizeof it.desc, tag ? tag : "");
+			sanitize_text(it.desc);
+			acc_add(&it);
+		}
+		j_free(root);
+		finish_load();
+		return;
+	}
 	J *arr = root;
 	J single;
 	if (root->t == 5) {
@@ -838,12 +932,21 @@ static void parse_page(void) {
 				J *sz = jget(e, "size");
 				it.size = (sz && sz->t == 2) ? (long long)sz->n : 0;
 				scpy(it.raw, sizeof it.raw, name); /* unmodified name for saving */
+				scpy(it.token, sizeof it.token, jstr(e, "sha"));
 				acc_add(&it);
 			}
 		}
 	}
 	/* detach the stack-allocated wrapper before freeing */
 	j_free(root);
+	if (task.type == T_DIR && task.target.path[0] == 0) {
+		Item rel;
+		memset(&rel, 0, sizeof rel);
+		rel.kind = K_REL;
+		scpy(rel.name, sizeof rel.name, "[Releases]");
+		scpy(rel.path, sizeof rel.path, "@releases");
+		acc_add(&rel);
+	}
 	if (task.type == T_REPOS && count >= 100 && task.page < 10) {
 		task.page++;
 		start_fetch();
@@ -861,10 +964,19 @@ static void open_confirm(const Item *it) {
 	cf.sys_idx = 0;
 	for (int i = 0; SYSTEMS[i]; i++) if (!strcmp(SYSTEMS[i], sys)) cf.sys_idx = i;
 	sanitize(cf.name, sizeof cf.name, it->raw[0] ? it->raw : it->name);
+	scpy(cf.repo, sizeof cf.repo, cur.repo);
+	cf.has_inst = cf.upd = 0;
+	Inst *e = inst_find(cf.repo, it->path);
+	if (e) {
+		cf.has_inst = 1;
+		cf.upd = it->token[0] && strcmp(e->token, it->token) != 0;
+		for (int i = 0; SYSTEMS[i]; i++) if (!strcmp(SYSTEMS[i], e->sys)) cf.sys_idx = i;
+		scpy(cf.name, sizeof cf.name, e->name);
+	}
 	screen = SC_CONFIRM;
 }
 
-static void begin_download(const char *final_name) {
+static void begin_download(const char *final_name, int replace) {
 	char dir[400];
 	dest_dir(dir, sizeof dir);
 	if (!mkdir_p(dir) || access(dir, W_OK) != 0) {
@@ -893,11 +1005,13 @@ static void begin_download(const char *final_name) {
 	snprintf(dl.final, sizeof dl.final, "%s/%s", dir, final_name);
 	snprintf(dl.part, sizeof dl.part, "%s.gitroms-part", dl.final);
 	dl.total = cf.item.size;
+	dl.replace = replace;
+	dl.existed = path_exists(dl.final);
 	remove(dl.part);
 	logf_("download %s -> %s", cf.item.url, dl.final);
 	task.type = T_DL;
 	task.cancel = 0;
-	if (!job_start(&task.job, cf.item.url, dl.part, resp_err, 3600)) {
+	if (!job_start(&task.job, cf.item.url, dl.part, resp_err, 3600, 0)) {
 		task.type = T_NONE;
 		show_error("Could not start curl.", 1);
 		return;
@@ -916,15 +1030,25 @@ static void finish_download(void) {
 	} else {
 		long long sz = file_size(dl.part);
 		if (sz == 0) { snprintf(msg, sizeof msg, "The downloaded file was empty."); remove(dl.part); }
-		else if (path_exists(dl.final)) { snprintf(msg, sizeof msg, "A file with that name appeared. Not overwritten."); remove(dl.part); }
+		else if (!dl.replace && path_exists(dl.final)) { snprintf(msg, sizeof msg, "A file with that name appeared. Not overwritten."); remove(dl.part); }
 		else if (rename(dl.part, dl.final) != 0) { snprintf(msg, sizeof msg, "Could not save file: %s", strerror(errno)); remove(dl.part); }
 		else {
 			char h[32];
 			human(h, sizeof h, sz);
-			snprintf(msg, sizeof msg, "Saved %s (%s) to %s.", dl.name, h, dl.sys);
+			snprintf(msg, sizeof msg, "%s %s (%s) in %s.", dl.replace && dl.existed ? "Updated" : "Saved", dl.name, h, dl.sys);
+			{
+				Inst n;
+				memset(&n, 0, sizeof n);
+				scpy(n.repo, sizeof n.repo, cf.repo);
+				scpy(n.remote, sizeof n.remote, cf.item.path);
+				scpy(n.token, sizeof n.token, cf.item.token);
+				scpy(n.sys, sizeof n.sys, dl.sys);
+				scpy(n.name, sizeof n.name, dl.name);
+				inst_record(&n);
+			}
 			result.note[0] = 0;
 			if (cf.item.size > 0 && sz != cf.item.size) snprintf(result.note, sizeof result.note, "Size differs from the listing (possibly a Git LFS file).");
-			hist_add("OK", dl.name, dl.sys, h);
+			hist_add("OK", dl.name, dl.sys, dl.replace && dl.existed ? "updated" : h);
 			ok = 1;
 		}
 	}
@@ -970,6 +1094,8 @@ static void update_task(uint32_t now) {
 		remove(resp_path);
 		if (task.type == T_DIR && task.target.path[0] == 0 && strstr(m, "404"))
 			snprintf(m, sizeof m, "This repository is empty or has no files on its default branch.");
+		if (task.type == T_REL && strstr(m, "404"))
+			snprintf(m, sizeof m, "No release has been published for this repository yet.");
 		task.type = T_NONE;
 		show_error(m, 0);
 		return;
@@ -1091,6 +1217,12 @@ static void act(int a) {
 				scpy(f.repo, sizeof f.repo, it->path);
 				scpy(f.branch, sizeof f.branch, it->branch);
 				begin_load(&f, M_PUSH, 0, 0);
+			} else if (it->kind == K_REL) {
+				f.kind = FK_REL;
+				scpy(f.repo, sizeof f.repo, cur.repo);
+				scpy(f.branch, sizeof f.branch, cur.branch);
+				scpy(f.path, sizeof f.path, "@releases");
+				begin_load(&f, M_PUSH, 0, 0);
 			} else if (it->kind == K_DIR) {
 				scpy(f.repo, sizeof f.repo, cur.repo);
 				scpy(f.branch, sizeof f.branch, cur.branch);
@@ -1112,16 +1244,21 @@ static void act(int a) {
 			snprintf(p, sizeof p, "%s/%s", dir, cf.name);
 			if (path_exists(p)) {
 				unique_name(cf.copy_name, sizeof cf.copy_name, dir, cf.name);
-				cf.conflict_sel = 0;
+				cf.conflict_sel = (cf.has_inst && cf.upd) ? 0 : 1; /* never replace by default unless an update is waiting */
 				screen = SC_CONFLICT;
-			} else begin_download(cf.name);
+			} else begin_download(cf.name, 0);
 		}
 		break;
 	}
 	case SC_CONFLICT:
-		if (a == A_UP || a == A_DOWN) cf.conflict_sel = 1 - cf.conflict_sel;
+		if (a == A_UP) cf.conflict_sel = (cf.conflict_sel + 2) % 3;
+		else if (a == A_DOWN) cf.conflict_sel = (cf.conflict_sel + 1) % 3;
 		else if (a == A_BACK) screen = SC_LIST;
-		else if (a == A_OK) { if (cf.conflict_sel == 0) begin_download(cf.copy_name); else screen = SC_LIST; }
+		else if (a == A_OK) {
+			if (cf.conflict_sel == 0) begin_download(cf.name, 1);
+			else if (cf.conflict_sel == 1) begin_download(cf.copy_name, 0);
+			else screen = SC_LIST;
+		}
 		break;
 	case SC_DOWNLOAD:
 		if (a == A_BACK) task.cancel = 1;
@@ -1283,13 +1420,17 @@ static void draw_list(void) {
 	if (cur.kind == K_REPO) {
 		snprintf(title, sizeof title, "%s", g_user);
 		snprintf(right, sizeof right, "%d repos", nitems);
+	} else if (cur.kind == FK_REL) {
+		const char *r = strchr(cur.repo, '/');
+		snprintf(title, sizeof title, "%s releases", r ? r + 1 : cur.repo);
+		scpy(right, sizeof right, nitems && items[0].desc[0] ? items[0].desc : "latest");
 	} else {
 		const char *r = strchr(cur.repo, '/');
 		snprintf(title, sizeof title, "%s%s%s", r ? r + 1 : cur.repo, cur.path[0] ? "/" : "", cur.path);
 		scpy(right, sizeof right, cur.branch);
 	}
 	header(title, right);
-	if (!nitems) text(32, 90, cur.kind == K_REPO ? "No public repositories found." : "No ROM files or folders here.", C_MUTED, 2);
+	if (!nitems) text(32, 90, cur.kind == K_REPO ? "No public repositories found." : cur.kind == FK_REL ? "No ROM or zip files in the latest release." : "No ROM files or folders here.", C_MUTED, 2);
 	for (int i = 0; i < ROWS; i++) {
 		int idx = cur.scroll + i;
 		if (idx >= nitems) break;
@@ -1299,10 +1440,16 @@ static void draw_list(void) {
 		uint32_t fg = sel ? C_INK : C_FG;
 		char nm[220];
 		if (it->kind == K_FILE) {
-			text_fit(16, y + 6, it->name, fg, 2, VW - 170);
+			text_fit(16, y + 6, it->name, fg, 2, VW - 236);
 			char h[32];
 			human(h, sizeof h, it->size);
-			text(VW - 24 - (int)strlen(h) * 16, y + 6, h, sel ? C_INK : C_MUTED, 2);
+			int hw = (int)strlen(h) * 16;
+			text(VW - 24 - hw, y + 6, h, sel ? C_INK : C_MUTED, 2);
+			Inst *e = inst_find(cur.repo, it->path);
+			if (e) {
+				int upd = it->token[0] && strcmp(e->token, it->token) != 0;
+				text(VW - 24 - hw - 56, y + 6, upd ? "UPD" : "OK", upd ? (sel ? C_INK : C_SIGNAL) : (sel ? C_INK : C_GOOD), 2);
+			}
 		} else {
 			snprintf(nm, sizeof nm, "%s%s", it->name, it->kind == K_DIR ? "/" : "");
 			text_fit(16, y + 6, nm, fg, 2, VW - 40);
@@ -1338,6 +1485,10 @@ static void draw_screen(uint32_t now) {
 		text(32, y, "Size", C_MUTED, 2);
 		text(160, y, cf.item.size > 0 ? h : "unknown", C_FG, 2);
 		y += 28;
+		text(32, y, "Status", C_MUTED, 2);
+		if (cf.has_inst) text(160, y, cf.upd ? "Update available" : "Up to date", cf.upd ? C_SIGNAL : C_GOOD, 2);
+		else text(160, y, "Not tracked yet", C_MUTED, 2);
+		y += 28;
 		text(32, y, "Save to", C_MUTED, 2);
 		text_fit(160, y, g_romroot, C_FG, 2, VW - 186);
 		y += 40;
@@ -1345,25 +1496,26 @@ static void draw_screen(uint32_t now) {
 		fill(160, y, 300, 30, C_RAISED);
 		snprintf(buf, sizeof buf, "<  %s  >", SYSTEMS[cf.sys_idx]);
 		text_fit(176, y + 7, buf, C_SIGNAL, 2, 270);
-		footer("A save  B cancel  L/R folder");
+		footer(cf.has_inst && cf.upd ? "A update  B cancel  L/R folder" : "A save  B cancel  L/R folder");
 		break;
 	}
 	case SC_CONFLICT: {
 		header("File already exists", NULL);
 		int y = text_wrap(32, 70, cf.name, C_FG, 2, VW - 64, 2);
-		text(32, y + 6, "It will not be overwritten.", C_MUTED, 2);
-		const char *opt[2];
-		char o1[340];
-		snprintf(o1, sizeof o1, "Save as %s", cf.copy_name);
-		opt[0] = o1;
-		opt[1] = "Keep existing file (cancel)";
+		text(32, y + 6, "Nothing is replaced unless chosen.", C_MUTED, 2);
+		const char *opt[3];
+		char o2[340];
+		opt[0] = cf.has_inst ? (cf.upd ? "Update: replace with new version" : "Re-download: replace file") : "Replace the existing file";
+		snprintf(o2, sizeof o2, "Save as %s", cf.copy_name);
+		opt[1] = o2;
+		opt[2] = "Keep existing file (cancel)";
 		y += 50;
-		for (int i = 0; i < 2; i++) {
+		for (int i = 0; i < 3; i++) {
 			if (i == cf.conflict_sel) fill(24, y, VW - 48, 34, C_SIGNAL);
 			text_fit(36, y + 9, opt[i], i == cf.conflict_sel ? C_INK : C_FG, 2, VW - 72);
 			y += 42;
 		}
-		footer("A choose  B cancel  UP/DOWN move");
+		footer("A choose  B cancel  UP/DN move");
 		break;
 	}
 	case SC_DOWNLOAD: {
@@ -1521,6 +1673,8 @@ int main(void) {
 		if (is_dir(ROM_ROOTS[i]) && access(ROM_ROOTS[i], W_OK) == 0) scpy(g_romroot, sizeof g_romroot, ROM_ROOTS[i]);
 	logf_("rom root: %s", g_romroot[0] ? g_romroot : "(none)");
 	hist_load();
+	snprintf(g_instpath, sizeof g_instpath, "%s/installed.txt", g_home);
+	inst_load();
 
 	SDL_SetHint("SDL_HINT_RENDER_SCALE_QUALITY", "0");
 	if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_GAMECONTROLLER | SDL_INIT_JOYSTICK) != 0) {

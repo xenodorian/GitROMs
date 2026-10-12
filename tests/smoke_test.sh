@@ -18,7 +18,7 @@ export GITROMS_HOME="$T/home" GITROMS_ROMS="$T/roms" GITROMS_WINDOWED=1 SDL_VIDE
 P=$(printf 'act=pgdn;%.0s' 1 2 3 4 5 6 7 8 9)
 # open GBA-Roms, save game.gba twice (second as a numbered copy), open a
 # folder, go back, open the history screen
-GITROMS_TEST="idle;${P}act=up;act=confirm;idle;act=down;act=down;act=confirm;act=confirm;idle;wait=0.5;act=confirm;act=confirm;act=confirm;act=confirm;idle;wait=0.5;act=confirm;act=up;act=up;act=confirm;idle;act=cancel;idle;act=start;wait=0.3" \
+GITROMS_TEST="idle;${P}act=up;act=confirm;idle;act=down;act=down;act=down;act=confirm;act=confirm;idle;wait=0.5;act=confirm;act=confirm;act=confirm;act=confirm;idle;wait=0.5;act=confirm;act=up;act=up;act=confirm;idle;act=cancel;idle;act=start;wait=0.3" \
   timeout 120 "$BIN"
 RC=$?
 fail=0

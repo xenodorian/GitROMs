@@ -33,6 +33,19 @@ save a numbered copy). Downloads write to a `.gitroms-part` file and are
 renamed only when complete. Folder lists are cached for the session, so going
 back does not use up GitHub's 60-requests-per-hour anonymous limit.
 
+## Updating files
+
+GitROMs remembers what it saved (`gitroms/data/installed.txt`). In a list, a
+file you saved earlier shows `OK` (unchanged) or `UPD` (changed upstream since
+you saved it). Open it and choose "Update" to replace the saved file in place.
+Nothing is replaced unless you pick that option; "Save as copy" and "Keep
+existing" are always offered.
+
+Built files (zips, `.sgba` packages) that a repo publishes as GitHub
+**Releases** appear under `[Releases]` at the top of the repo's file list (it
+reads the repo's latest release). Files saved before this version are not
+tracked yet; replace them once and they will be.
+
 ## Change the GitHub user
 
 Edit `gitroms/gitroms.conf` on a PC (`user=name`).

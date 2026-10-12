@@ -1,0 +1,15 @@
+# Repo: xenodorian/BibooSGBA, file: .github/workflows/sgba.yml
+# 1) Give the workflow permission to write releases (top level, next to `on:`):
+permissions:
+  contents: write
+
+# 2) In job `package`, add this step after the upload-artifact step:
+      - name: Publish the game to the rolling "latest" release
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view latest >/dev/null 2>&1 || gh release create latest \
+            --title "Latest build" --notes "Rolling build from main, replaced on every push." \
+            --target "$GITHUB_SHA" --latest
+          gh release upload latest dist/*.sgba dist/*arkos*.zip --clobber

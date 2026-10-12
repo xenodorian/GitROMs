@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Tiny fake of the GitHub REST API pieces GitROMs uses (for PC tests)."""
-import json, os, sys, urllib.parse
+import hashlib, json, os, sys, urllib.parse
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8765
 BASE = f"http://127.0.0.1:{PORT}"
 BLOB = os.urandom(1_500_000)
+VER = 0  # bumped via GET /__bump to simulate new commits and a new release build
 
 REPOS = [{"name": f"filler{i}", "description": None, "default_branch": "main",
           "owner": {"login": "xenodorian"}} for i in range(100)]
@@ -15,7 +16,7 @@ REPOS += [
 ]
 TREE = {
     "GBA-Roms": {
-        "": [("dir", "hacks", 0), ("file", "game.gba", len(BLOB)), ("file", "README.md", 10),
+        "": [("dir", "hacks", 0), ("file", "game.gba", None), ("file", "README.md", 10),
              ("file", ".hidden.gba", 5), ("file", "Big Name (USA) [!].sgba", 700_000)],
         "hacks": [("file", "x.zip", 1234), ("file", "photo.png", 5)],
     },
@@ -38,6 +39,19 @@ class H(BaseHTTPRequestHandler):
             page = int(q.get("page", ["1"])[0])
             chunk = REPOS[(page - 1) * 100: page * 100]
             return self.send(200, json.dumps(chunk).encode())
+        if p == "/__bump":
+            global VER
+            VER += 1
+            return self.send(200, str(VER).encode(), "text/plain")
+        if p.startswith("/repos/") and p.endswith("/releases/latest"):
+            if p.split("/")[3] != "GBA-Roms":
+                return self.send(404, b'{"message":"Not Found"}')
+            size = 20000 + VER
+            rel = {"tag_name": "latest", "assets": [
+                {"name": "SGBA-arkos-aarch64.zip", "size": size, "id": 1000 + VER,
+                 "updated_at": f"2026-10-1{VER}T00:00:00Z", "browser_download_url": f"{BASE}/dl/SGBA-arkos-aarch64.zip?size={size}"},
+                {"name": "build.log", "size": 5, "id": 7, "updated_at": "x", "browser_download_url": f"{BASE}/dl/build.log?size=5"}]}
+            return self.send(200, json.dumps(rel).encode())
         if p.startswith("/repos/") and "/contents" in p:
             parts = p.split("/")
             repo = parts[3]
@@ -50,14 +64,18 @@ class H(BaseHTTPRequestHandler):
             out = []
             for kind, name, size in tree[sub]:
                 path = (sub + "/" + name).strip("/")
-                e = {"name": name, "path": path, "type": kind, "size": size}
+                if name == "game.gba":
+                    size = len(BLOB) + 100 * VER
+                e = {"name": name, "path": path, "type": kind, "size": size,
+                     "sha": hashlib.sha1(f"{path}{VER if name == 'game.gba' else 0}".encode()).hexdigest()}
                 if kind == "file":
                     e["download_url"] = f"{BASE}/raw/{urllib.parse.quote(path)}?size={size}"
                 out.append(e)
             return self.send(200, json.dumps(out).encode())
-        if p.startswith("/raw/"):
+        if p.startswith("/raw/") or p.startswith("/dl/"):
             size = int(q.get("size", ["10"])[0])
-            return self.send(200, (BLOB * 2)[:size] if size else b"", "application/octet-stream")
+            data = (f"VER{VER}".encode() + BLOB * 2)[:size]
+            return self.send(200, data, "application/octet-stream")
         self.send(404, b"{}")
 
 if __name__ == "__main__":

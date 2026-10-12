@@ -20,10 +20,11 @@ sysroot). Not yet run on a real R36S. See [docs/DECISIONS.md](docs/DECISIONS.md)
 ## Repo layout
 
 - `native/gitroms.c` the whole program (SDL2 declared by hand, like the CryMon port)
+- `docs/ci/` workflow snippets that publish builds as a rolling GitHub Release (what GitROMs updates from)
 - `port/` package contents: launcher, gptokeyb map, config, docs
 - `tools/build_native.sh` cross-builds aarch64, armhf and x86_64 into `build/`
 - `tools/fetch_sysroot.sh` downloads Ubuntu 20.04 glibc 2.31 so binaries run on older ArkOS
 - `tools/build_zip.py` builds `dist/GitROMs.zip`
-- `tests/` `check_package.py` (static), `smoke_test.sh` (headless run), `mock_github.py`
+- `tests/` `check_package.py` (static), `smoke_test.sh` and `update_test.sh` (headless runs), `mock_github.py`
 - `port-love/` the LOVE version. Superseded: it needs a LOVE runtime the device lacked.
 - `GitROMs/` the first Python/pygame attempt. Incomplete (`main.py` never committed).
