@@ -2394,6 +2394,15 @@ static void draw_screen(uint32_t now) {
 			const char *m = c->status == CS_CHECKING ? "Checking..." : c->status == CS_IDLE ? "Waiting..." : c->status == CS_UPDATING ? "Updating..." : c->msg;
 			text_fit(16, y + 30, m, col, 2, VW - 40);
 		}
+		if (comp_sel >= 0 && comp_sel < ncomp && comp[comp_sel].total > 0) {          /* what the last check actually saw */
+			Comp *c = &comp[comp_sel];
+			const char *st = c->stamp, *tag = st;
+			size_t sl = strlen(st);
+			if (sl > 7) tag = st + sl - 7;
+			char d[120];
+			snprintf(d, sizeof d, "Server file: %lld bytes  id ...%s", c->total, c->pretty[0] ? c->pretty : tag);
+			text_fit(16, 384, d, C_MUTED, 1, VW - 32);
+		}
 		if (up.restart_needed) text_fit(16, 410, "GitROMs was updated. Quit and reopen it.", C_SIGNAL, 2, VW - 32);
 		if (up.phase != UPH_NONE) footer("Checking...  B back");
 		else if (up_available()) footer("A update  SEL check again  B back");
