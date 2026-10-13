@@ -25,7 +25,7 @@ run() { # name steps [extra env...]
 BTN() { echo "jb=$1;wait=0.05;ju=$1;wait=0.15"; }   # press and release a raw button
 
 # 1. defaults: d-pad buttons, page buttons and the four action buttons
-run raw "idle;logsel;logscr;$(BTN 9);logsel;$(BTN 8);logsel;$(BTN 5);logsel;$(BTN 4);logsel;$(BTN 1);idle;logscr;$(BTN 0);idle;logscr;$(BTN 13);logscr;$(BTN 13);logscr;$(BTN 2);logscr;$(BTN 0);logscr;$(BTN 12);idle;logscr"
+run raw "idle;logsel;logscr;$(BTN 9);logsel;$(BTN 8);logsel;$(BTN 5);logsel;$(BTN 4);logsel;$(BTN 9);$(BTN 1);idle;logscr;$(BTN 0);idle;logscr;$(BTN 13);logscr;$(BTN 13);logscr;$(BTN 2);logscr;$(BTN 0);logscr;$(BTN 12);idle;logscr"
 chk "raw button 9 (down) moves down 1" "[ \$(( \${SEL[1]:-0} - \${SEL[0]:-0} )) = 1 ]"
 chk "raw button 8 (up) moves up 1" "[ \${SEL[2]:-x} = \${SEL[0]:-y} ]"
 chk "raw button 5 (R1) pages down 12" "[ \$(( \${SEL[3]:-0} - \${SEL[2]:-0} )) = 12 ]"

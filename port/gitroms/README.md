@@ -42,18 +42,38 @@ stick is not mapped on purpose: a worn stick near its centre sends rapid false
 presses. To use it, add `left_analog_up = up` (and down/left/right) to
 `gitroms/gitroms.gptk`.
 
-## Updating files
+## Updates (the push-button way)
 
-GitROMs remembers what it saved (`gitroms/data/installed.txt`). In a list, a
-file you saved earlier shows `OK` (unchanged) or `UPD` (changed upstream since
-you saved it). Open it and choose "Update" to replace the saved file in place.
-Nothing is replaced unless you pick that option; "Save as copy" and "Keep
-existing" are always offered.
+Open the first entry in the repository list, **[Check for updates]** (or press
+**X** on the error screen if GitHub's list will not load). GitROMs checks:
 
-Built files (zips, `.sgba` packages) that a repo publishes as GitHub
-**Releases** appear under `[Releases]` at the top of the repo's file list (it
-reads the repo's latest release). Files saved before this version are not
-tracked yet; replace them once and they will be.
+- **GitROMs** itself,
+- the **SGBA emulator**,
+- your games (Parry Perry).
+
+Each one shows "Up to date", "N of M files changed, X KB", or "Not installed".
+Press **A** and it downloads only the files that changed and writes them over
+the old ones in the right folders (`ports/` for GitROMs and SGBA,
+`ports/sgba/games/` for games). Then it checks again to confirm. If GitROMs
+itself was updated it says so; close and reopen it.
+
+How "only what changed" works: for a zip bundle GitROMs reads just the list of
+files inside, compares each file on your card (size and checksum), and fetches
+only the differing files with byte-range requests. Every file is checked against
+its checksum before it replaces the old one, so a bad download never overwrites
+a good file. Your own `gitroms.conf` and `components.conf` are never overwritten.
+It needs no accounts and uses none of GitHub's limited API requests. A single
+file (a game) is compared by its size and its last 128 KB, so use `.sgba` or
+`.zip` files for games.
+
+To add another game or bundle, add a line to `gitroms/components.conf`
+(the file explains the format).
+
+## Updating files you saved from a repo
+
+Files saved from a repo's file list or `[Releases]` show `OK` or `UPD`, and
+saving one again offers "Update: replace with new version". This works for any
+file, but the push-button screen above is the easy way.
 
 ## Change the GitHub user
 

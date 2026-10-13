@@ -23,6 +23,7 @@
 #include <sys/wait.h>
 #include <sys/statvfs.h>
 #include "font8.h"
+#include "zipx.h"
 
 /* ---------------------------------------------------------------- SDL2 */
 typedef struct SDL_Window SDL_Window;
@@ -78,14 +79,14 @@ int SDL_PushEvent(SDL_Event *);
 #define MAXITEMS 1500
 #define ROWS 12
 #define ROWH 30
-#define VERSION "3.4"
+#define VERSION "3.5"
 
 static uint32_t fb[VW * VH];
 
-enum { K_REPO, K_DIR, K_FILE, K_REL };
+enum { K_REPO, K_DIR, K_FILE, K_REL, K_UPD };
 #define FK_REL 2 /* frame kind: latest-release asset list */
 enum { SC_BUSY, SC_LIST, SC_CONFIRM, SC_CONFLICT, SC_DOWNLOAD, SC_RESULT,
-       SC_ERROR, SC_HISTORY, SC_EXIT, SC_SYSINFO };
+       SC_ERROR, SC_HISTORY, SC_EXIT, SC_SYSINFO, SC_UPDATES, SC_UPDATING };
 enum { A_NONE, A_UP, A_DOWN, A_LEFT, A_RIGHT, A_OK, A_BACK, A_START, A_SELECT,
        A_PGUP, A_PGDN, A_INFO };
 enum { T_NONE, T_REPOS, T_DIR, T_DL, T_REL };
@@ -451,12 +452,14 @@ typedef struct {
 	char out[600], err[640], errtext[200];
 } Job;
 
-static int job_start(Job *j, const char *url, const char *out, const char *errpath, int maxtime, int api) {
+static int job_start_ex(Job *j, const char *url, const char *out, const char *errpath, int maxtime, int api,
+                        const char *range, const char *hdrpath, int maxfilesize) {
 	memset(j, 0, sizeof *j);
 	scpy(j->out, sizeof j->out, out);
 	scpy(j->err, sizeof j->err, errpath);
-	char mt[16];
+	char mt[16], mf[16];
 	snprintf(mt, sizeof mt, "%d", maxtime);
+	snprintf(mf, sizeof mf, "%d", maxfilesize);
 	pid_t pid = fork();
 	if (pid < 0) return 0;
 	if (pid == 0) {
@@ -464,16 +467,28 @@ static int job_start(Job *j, const char *url, const char *out, const char *errpa
 		if (fd >= 0) { dup2(fd, 2); close(fd); }
 		int nul = open("/dev/null", O_RDWR);
 		if (nul >= 0) { dup2(nul, 0); dup2(nul, 1); close(nul); }
-		execlp("curl", "curl", "-sS", "-L", "-f", "--connect-timeout", "15",
-		       "--max-time", mt, "--retry", "2", "--retry-delay", "2",
-		       "-A", "GitROMs-R36S/" VERSION,
-		       "-H", api ? "Accept: application/vnd.github+json" : "Accept: */*",
-		       "-o", j->out, url, (char *)NULL);
+		const char *av[40];
+		int n = 0;
+		av[n++] = "curl"; av[n++] = "-sS"; av[n++] = "-L"; av[n++] = "-f";
+		av[n++] = "--connect-timeout"; av[n++] = "15";
+		av[n++] = "--max-time"; av[n++] = mt;
+		av[n++] = "--retry"; av[n++] = "2"; av[n++] = "--retry-delay"; av[n++] = "2";
+		av[n++] = "-A"; av[n++] = "GitROMs-R36S/" VERSION;
+		av[n++] = "-H"; av[n++] = api ? "Accept: application/vnd.github+json" : "Accept: */*";
+		if (range) { av[n++] = "-r"; av[n++] = range; }
+		if (hdrpath) { av[n++] = "-D"; av[n++] = hdrpath; }
+		if (maxfilesize > 0) { av[n++] = "--max-filesize"; av[n++] = mf; }
+		av[n++] = "-o"; av[n++] = j->out; av[n++] = url; av[n] = NULL;
+		execvp("curl", (char *const *)av);
 		_exit(127);
 	}
 	j->pid = pid;
 	j->running = 1;
 	return 1;
+}
+
+static int job_start(Job *j, const char *url, const char *out, const char *errpath, int maxtime, int api) {
+	return job_start_ex(j, url, out, errpath, maxtime, api, NULL, NULL, 0);
 }
 
 /* Returns 1 once finished (rc and errtext set). */
@@ -523,6 +538,7 @@ static void explain(const Job *j, char *out, size_t n) {
 		snprintf(out, n, "Secure connection failed. Check the device date and time."); break;
 	case 60: snprintf(out, n, "Certificate check failed. Check the device date and time."); break;
 	case 18: snprintf(out, n, "Download was cut short. Try again."); break;
+	case 33: snprintf(out, n, "The server could not send that part of the file."); break;
 	case 56: snprintf(out, n, "Connection dropped. Try again."); break;
 	case 127: snprintf(out, n, "curl is not installed on this device."); break;
 	default: snprintf(out, n, "Network error (curl %d).", j->rc);
@@ -843,6 +859,19 @@ static void acc_add(const Item *it) {
 static void finish_load(void) {
 	char key[700];
 	frame_key(&task.target, key, sizeof key);
+	if (task.target.kind == K_REPO) {
+		Item u;
+		memset(&u, 0, sizeof u);
+		u.kind = K_UPD;
+		scpy(u.name, sizeof u.name, "[Check for updates]");
+		scpy(u.desc, sizeof u.desc, "GitROMs, the SGBA emulator and your games");
+		if (!task.acc) task.acc = malloc(MAXITEMS * sizeof *task.acc);
+		if (task.acc && task.nacc < MAXITEMS) {
+			memmove(task.acc + 1, task.acc, (size_t)task.nacc * sizeof *task.acc);
+			task.acc[0] = u;
+			task.nacc++;
+		}
+	}
 	if (task.target.kind != K_REPO) qsort(task.acc, (size_t)task.nacc, sizeof *task.acc, item_cmp);
 	if (task.acc) cache_put(key, task.acc, task.nacc);
 	task.type = T_NONE;
@@ -1165,6 +1194,588 @@ static void si_stop(void) {
 	if (si_running) { kill(sysi_pid, SIGTERM); waitpid(sysi_pid, NULL, 0); si_running = 0; }
 }
 
+/* ================================================================ updates
+ * Push-button updates for GitROMs itself, the SGBA emulator and your games.
+ * A "component" is a zip bundle (many files) or a single file at a URL. For a
+ * zip, only its file list (central directory) is read, every file on the card
+ * is compared by size and CRC32, and only the files that differ are fetched
+ * (HTTP byte ranges, merged into a few requests) and written over the old
+ * ones. Nothing is stored: the files on the card are the record of what is
+ * installed, so it also works for installs made by hand. */
+#define MAXCOMP 6
+#define TAIL_BYTES 131072
+enum { CS_IDLE, CS_CHECKING, CS_OK, CS_UPDATE, CS_NEW, CS_ERROR, CS_UPDATING };
+enum { UPH_NONE, UPH_SIZE, UPH_TAIL, UPH_CD, UPH_CMP, UPH_FETCH, UPH_EXTRACT, UPH_FILEDL };
+
+typedef struct {
+	char name[48], url[360], dest[240], keep[240];
+	int kind, self;          /* kind 0 = zip bundle, 1 = single file */
+	int status;
+	char msg[200];
+	long long total;
+	int rangeok;
+	ZxDir dir;
+	unsigned char *need;
+	int nneed, nlocal;
+	long long need_c, need_u;
+} Comp;
+
+static Comp comp[MAXCOMP];
+static int ncomp, comp_sel, up_from = SC_LIST;   /* screen to return to */
+static char g_ports[300];
+
+static struct {
+	int phase, ci, mode;     /* mode 0 = check, 1 = update */
+	int cancel;
+	Job job;
+	uint8_t *tail;
+	long long tail_start, tail_file_off;
+	uint32_t cd_off, cd_size, cd_count;
+	int cmp_i, ex_i;
+	struct { long long s, e; } reg[40];
+	int nreg, ri, full;
+	long long p_done, p_total, p_base;
+	char step[120];
+	int restart_needed;
+	int flag[MAXCOMP], updated[MAXCOMP];
+} up;
+
+static void comp_add(const char *name, int kind, const char *url, const char *dest, const char *keep, int self) {
+	if (ncomp >= MAXCOMP) return;
+	Comp *c = &comp[ncomp++];
+	memset(c, 0, sizeof *c);
+	scpy(c->name, sizeof c->name, name);
+	c->kind = kind;
+	scpy(c->url, sizeof c->url, url);
+	scpy(c->dest, sizeof c->dest, dest);
+	scpy(c->keep, sizeof c->keep, keep);
+	c->self = self;
+}
+
+static void comp_runtime_free(Comp *c) {
+	zx_free(&c->dir);
+	free(c->need);
+	c->need = NULL;
+	c->nneed = c->nlocal = 0;
+	c->need_c = c->need_u = 0;
+}
+
+/* components.conf lines:  name|zip or file|url|destination|keep list|self
+ * destination is relative to the ports folder ("." = the ports folder itself;
+ * for a single file it is the file's path). Files in the keep list (comma
+ * separated, paths as inside the zip) are installed only if missing. */
+static void comps_load(void) {
+	const char *path = getenv("GITROMS_COMPONENTS");
+	char *buf = path ? read_file(path, 16384, NULL) : NULL;
+	for (int i = 0; i < ncomp; i++) comp_runtime_free(&comp[i]);
+	ncomp = 0;
+	if (buf) {
+		for (char *line = strtok(buf, "\n"); line; line = strtok(NULL, "\n")) {
+			char *f[6] = {0};
+			int k = 0;
+			size_t l = strlen(line);
+			while (l && (line[l - 1] == '\r' || line[l - 1] == ' ')) line[--l] = 0;
+			if (!l || line[0] == '#') continue;
+			char *p = line;
+			while (k < 6) {
+				f[k++] = p;
+				char *t = strchr(p, '|');
+				if (!t) break;
+				*t = 0;
+				p = t + 1;
+			}
+			if (k < 4 || !f[0][0] || !f[2][0]) continue;
+			comp_add(f[0], !strcmp(f[1], "file"), f[2], f[3], k > 4 ? f[4] : "", k > 5 && !strcmp(f[5], "self"));
+		}
+		free(buf);
+	}
+	if (!ncomp) {
+		comp_add("GitROMs", 0, "https://github.com/xenodorian/GitROMs/raw/main/dist/GitROMs.zip", ".",
+		         "gitroms/gitroms.conf,gitroms/components.conf", 1);
+		comp_add("SGBA emulator", 0, "https://github.com/xenodorian/SGBA/releases/download/latest/SGBA-arkos-aarch64.zip", ".",
+		         "README.txt", 0);
+		comp_add("Parry Perry (game)", 1, "https://github.com/xenodorian/BibooSGBA/releases/download/latest/parry-perry.sgba",
+		         "sgba/games/parry-perry.sgba", "", 0);
+	}
+	for (int i = 0; i < ncomp; i++) comp[i].status = CS_IDLE;
+}
+
+static void comp_path(const Comp *c, const char *name, char *out, size_t n) {
+	if (c->kind == 1) snprintf(out, n, "%s/%s", g_ports, c->dest);
+	else if (!c->dest[0] || !strcmp(c->dest, ".")) snprintf(out, n, "%s/%s", g_ports, name);
+	else snprintf(out, n, "%s/%s/%s", g_ports, c->dest, name);
+}
+
+static int comp_keep(const Comp *c, const char *name) {
+	const char *p = c->keep;
+	size_t nl = strlen(name);
+	while (*p) {
+		const char *q = strchr(p, ',');
+		size_t l = q ? (size_t)(q - p) : strlen(p);
+		if (l == nl && !strncmp(p, name, nl)) return 1;
+		if (!q) break;
+		p = q + 1;
+	}
+	return 0;
+}
+
+static void mkparent(const char *path) {
+	char d[900];
+	scpy(d, sizeof d, path);
+	char *s = strrchr(d, '/');
+	if (s) { *s = 0; mkdir_p(d); }
+}
+
+static void up_tmp(char *out, size_t n, const char *name) { snprintf(out, n, "%s/%s", g_tmp, name); }
+
+/* Value of the LAST header line starting with `key` (redirects give several blocks). */
+static int hdr_find(const char *path, const char *key, char *out, size_t n) {
+	char *s = read_file(path, 65536, NULL);
+	int found = 0;
+	if (!s) return 0;
+	size_t kl = strlen(key);
+	for (char *line = strtok(s, "\n"); line; line = strtok(NULL, "\n"))
+		if (!strncasecmp_(line, key, kl)) {
+			const char *v = line + kl;
+			while (*v == ' ') v++;
+			scpy(out, n, v);
+			size_t l = strlen(out);
+			while (l && (out[l - 1] == '\r' || out[l - 1] == ' ')) out[--l] = 0;
+			found = 1;
+		}
+	free(s);
+	return found;
+}
+
+static long long hdr_total(const char *path, int *rangeok) {
+	char v[200];
+	*rangeok = 0;
+	if (hdr_find(path, "content-range:", v, sizeof v)) {
+		const char *sl = strrchr(v, '/');
+		if (sl && isdigit((unsigned char)sl[1])) { *rangeok = 1; return atoll(sl + 1); }
+	}
+	if (hdr_find(path, "content-length:", v, sizeof v)) return atoll(v);
+	return 0;
+}
+
+static int up_job(const Comp *c, const char *outname, long long a, long long b, const char *hdrname, int maxfs, int maxtime) {
+	char out[480], hdr[480], err[480], rng[64];
+	up_tmp(out, sizeof out, outname);
+	up_tmp(err, sizeof err, "up.err");
+	remove(out);
+	hdr[0] = 0;
+	if (hdrname) { up_tmp(hdr, sizeof hdr, hdrname); remove(hdr); }
+	if (b >= 0) snprintf(rng, sizeof rng, "%lld-%lld", a, b);
+	return job_start_ex(&up.job, c->url, out, err, maxtime, 0, b >= 0 ? rng : NULL, hdrname ? hdr : NULL, maxfs);
+}
+
+static void up_cleanup_tmp(void) {
+	char p[480];
+	static const char *fixed[] = {"up.size", "up.hdr", "up.tail", "up.cd", "up.err"};
+	for (int i = 0; i < 5; i++) { up_tmp(p, sizeof p, fixed[i]); remove(p); }
+	for (int i = 0; i < 40; i++) { char n[24]; snprintf(n, sizeof n, "up.r%d", i); up_tmp(p, sizeof p, n); remove(p); }
+	free(up.tail);
+	up.tail = NULL;
+}
+
+static void up_advance(void);
+static void up_begin(Comp *c);
+
+static void up_fail(Comp *c, const char *msg) {
+	c->status = CS_ERROR;
+	scpy(c->msg, sizeof c->msg, msg);
+	logf_("update %s: %s", c->name, msg);
+	comp_runtime_free(c);
+	up_cleanup_tmp();
+	up_advance();
+}
+
+static void up_fail_job(Comp *c) {
+	char m[300];
+	explain(&up.job, m, sizeof m);
+	logf_("curl %d: %s", up.job.rc, up.job.errtext);
+	up_fail(c, m);
+}
+
+static void up_finish_comp(Comp *c, int st, const char *msg) {
+	c->status = st;
+	if (msg != c->msg) scpy(c->msg, sizeof c->msg, msg);   /* callers often pass c->msg itself */
+	up_cleanup_tmp();
+	up_advance();
+}
+
+static void up_advance(void) {
+	for (;;) {
+		up.ci++;
+		if (up.ci >= ncomp) {
+			if (up.mode == 1) {
+				int any = 0;
+				for (int i = 0; i < ncomp; i++) { up.flag[i] = up.updated[i]; any |= up.updated[i]; }
+				if (any) { up.mode = 0; up.ci = -1; continue; }   /* re-check what was just updated */
+			}
+			up.phase = UPH_NONE;
+			if (screen == SC_UPDATING) screen = SC_UPDATES;
+			return;
+		}
+		Comp *c = &comp[up.ci];
+		if (up.mode == 0 ? up.flag[up.ci] : (c->status == CS_UPDATE || c->status == CS_NEW)) { up_begin(c); return; }
+	}
+}
+
+static int up_space_ok(long long need) {
+	struct statvfs sv;
+	if (statvfs(g_ports, &sv) != 0) return 1;
+	return (long long)sv.f_bavail * (long long)sv.f_frsize >= need + 16LL * 1048576;
+}
+
+static ZxEnt *qs_e;
+static int cmp_off(const void *a, const void *b) {
+	uint32_t x = qs_e[*(const int *)a].off, y = qs_e[*(const int *)b].off;
+	return x < y ? -1 : x > y;
+}
+
+static void up_begin_update(Comp *c) {
+	c->status = CS_UPDATING;
+	up.p_done = up.p_base = 0;
+	up.cancel = 0;
+	snprintf(up.step, sizeof up.step, "Downloading");
+	if (c->kind == 1) {
+		char path[900], part[920], err[480];
+		comp_path(c, "", path, sizeof path);
+		if (!up_space_ok(c->total * 2)) { up_fail(c, "Not enough free space."); return; }
+		mkparent(path);
+		snprintf(part, sizeof part, "%s.gitroms-part", path);
+		remove(part);
+		up_tmp(err, sizeof err, "up.err");
+		up.p_total = c->total;
+		if (!job_start_ex(&up.job, c->url, part, err, 3600, 0, NULL, NULL, 0)) { up_fail(c, "Could not start curl."); return; }
+		up.phase = UPH_FILEDL;
+		return;
+	}
+	if (!up_space_ok(c->need_u + c->need_c)) { up_fail(c, "Not enough free space."); return; }
+	int m = 0;
+	int *ord = malloc((size_t)(c->dir.n ? c->dir.n : 1) * sizeof *ord);
+	if (!ord) { up_fail(c, "Out of memory."); return; }
+	for (int i = 0; i < c->dir.n; i++) if (c->need[i]) ord[m++] = i;
+	qs_e = c->dir.e;
+	qsort(ord, (size_t)m, sizeof *ord, cmp_off);
+	up.nreg = 0;
+	int too_many = 0;
+	for (int k = 0; k < m; k++) {
+		const ZxEnt *e = &c->dir.e[ord[k]];
+		long long s = e->off, en = (long long)e->off + 30 + (long long)strlen(e->name) + 256 + e->csize;
+		if (en > c->total) en = c->total;
+		if (up.nreg && s - up.reg[up.nreg - 1].e <= 65536 && en - up.reg[up.nreg - 1].s <= 24LL * 1048576) {
+			if (en - 1 > up.reg[up.nreg - 1].e) up.reg[up.nreg - 1].e = en - 1;
+		} else if (up.nreg < 40) {
+			up.reg[up.nreg].s = s;
+			up.reg[up.nreg].e = en - 1;
+			up.nreg++;
+		} else { too_many = 1; break; }
+	}
+	free(ord);
+	long long want = 0;
+	for (int r = 0; r < up.nreg; r++) want += up.reg[r].e - up.reg[r].s + 1;
+	up.full = !c->rangeok || too_many || up.nreg > 30 || want > c->total * 6 / 10;
+	if (up.full) { up.nreg = 1; up.reg[0].s = 0; up.reg[0].e = c->total - 1; want = c->total; }
+	up.p_total = want;
+	up.ri = 0;
+	logf_("update %s: %d files, %d region(s), %s, %lld bytes to fetch", c->name, c->nneed, up.nreg, up.full ? "whole file" : "ranges", want);
+	if (!up_job(c, "up.r0", up.reg[0].s, up.full && !c->rangeok ? -1 : up.reg[0].e, NULL, 0, 3600)) { up_fail(c, "Could not start curl."); return; }
+	up.phase = UPH_FETCH;
+}
+
+static void up_begin(Comp *c) {
+	if (up.mode == 1) { up_begin_update(c); return; }
+	comp_runtime_free(c);
+	c->status = CS_CHECKING;
+	c->msg[0] = 0;
+	up.cancel = 0;
+	snprintf(up.step, sizeof up.step, "Checking %s", c->name);
+	if (!up_job(c, "up.size", 0, 0, "up.hdr", 4096, 60)) { up_fail(c, "Could not start curl."); return; }
+	up.phase = UPH_SIZE;
+}
+
+static void up_cd_ready(Comp *c, const uint8_t *cd) {
+	if (zx_parse_cd(cd, up.cd_size, up.cd_count, &c->dir)) { up_fail(c, "Could not read the package file list."); return; }
+	c->need = calloc((size_t)(c->dir.n ? c->dir.n : 1), 1);
+	if (!c->need) { up_fail(c, "Out of memory."); return; }
+	free(up.tail);
+	up.tail = NULL;
+	up.cmp_i = 0;
+	up.phase = UPH_CMP;
+}
+
+static uint8_t *read_range(const char *path, long long off, size_t len) {
+	FILE *f = fopen(path, "rb");
+	uint8_t *b = malloc(len ? len : 1);
+	if (!f || !b) { if (f) fclose(f); free(b); return NULL; }
+	if (fseek(f, (long)off, SEEK_SET) != 0 || fread(b, 1, len, f) != len) { fclose(f); free(b); return NULL; }
+	fclose(f);
+	return b;
+}
+
+static void up_tail_ready(Comp *c) {
+	char tp[480];
+	up_tmp(tp, sizeof tp, "up.tail");
+	size_t len = (size_t)(c->total - up.tail_start);
+	up.tail = read_range(tp, up.tail_file_off, len);
+	if (!up.tail) { up_fail(c, "The download was incomplete."); return; }
+	if (c->kind == 1) {
+		char path[900];
+		comp_path(c, "", path, sizeof path);
+		c->need_c = c->total;
+		char h[32];
+		human(h, sizeof h, c->total);
+		if (!path_exists(path)) { snprintf(c->msg, sizeof c->msg, "Not installed (%s)", h); up_finish_comp(c, CS_NEW, c->msg); return; }
+		if (file_size(path) != c->total) { snprintf(c->msg, sizeof c->msg, "New version (%s)", h); up_finish_comp(c, CS_UPDATE, c->msg); return; }
+		uint8_t *loc = read_range(path, up.tail_start, len);
+		int same = loc && !memcmp(loc, up.tail, len);
+		free(loc);
+		if (same) up_finish_comp(c, CS_OK, "Up to date");
+		else { snprintf(c->msg, sizeof c->msg, "New version (%s)", h); up_finish_comp(c, CS_UPDATE, c->msg); }
+		return;
+	}
+	if (zx_find_eocd(up.tail, len, &up.cd_off, &up.cd_size, &up.cd_count)) { up_fail(c, "Not a valid zip file."); return; }
+	if ((long long)up.cd_off >= up.tail_start && (long long)up.cd_off + up.cd_size <= c->total) {
+		up_cd_ready(c, up.tail + (up.cd_off - up.tail_start));
+		return;
+	}
+	if (c->rangeok) {
+		if (!up_job(c, "up.cd", up.cd_off, (long long)up.cd_off + up.cd_size - 1, NULL, 0, 120)) { up_fail(c, "Could not start curl."); return; }
+		up.phase = UPH_CD;
+		return;
+	}
+	up_fail(c, "Could not read the package file list.");
+}
+
+static void up_cmp_step(Comp *c) {
+	uint32_t t0 = SDL_GetTicks();
+	while (up.cmp_i < c->dir.n) {
+		const ZxEnt *e = &c->dir.e[up.cmp_i];
+		size_t nl = strlen(e->name);
+		if (!(nl && e->name[nl - 1] == '/')) {
+			if (!zx_safe_name(e->name)) { up_fail(c, "The package has an unsafe file path."); return; }
+			char path[900];
+			comp_path(c, e->name, path, sizeof path);
+			int exists = path_exists(path), need;
+			if (exists) c->nlocal++;
+			if (!exists) need = 1;
+			else if (comp_keep(c, e->name)) need = 0;
+			else if ((uint32_t)file_size(path) != e->usize) need = 1;
+			else { int ok; uint32_t crc = zx_crc32_file(path, &ok); need = !ok || crc != e->crc; }
+			if (need) { c->need[up.cmp_i] = 1; c->nneed++; c->need_c += e->csize; c->need_u += e->usize; }
+		}
+		up.cmp_i++;
+		if (SDL_GetTicks() - t0 > 25) { up.p_done = up.cmp_i; up.p_total = c->dir.n; return; }
+	}
+	char h[32];
+	human(h, sizeof h, c->need_c);
+	if (!c->nneed) { snprintf(c->msg, sizeof c->msg, "Up to date (%d files)", c->dir.n); up_finish_comp(c, CS_OK, c->msg); }
+	else if (!c->nlocal) { snprintf(c->msg, sizeof c->msg, "Not installed: %d files, %s", c->nneed, h); up_finish_comp(c, CS_NEW, c->msg); }
+	else { snprintf(c->msg, sizeof c->msg, "%d of %d files changed, %s", c->nneed, c->dir.n, h); up_finish_comp(c, CS_UPDATE, c->msg); }
+	/* keep dir/need for the update step */
+}
+
+static const char *up_extract_entry(Comp *c, const ZxEnt *e) {
+	int r;
+	for (r = 0; r < up.nreg; r++)
+		if ((long long)e->off >= up.reg[r].s && (long long)e->off + 30 <= up.reg[r].e + 1) break;
+	if (r >= up.nreg) return "A file was not downloaded.";
+	char rp[480], rn[24];
+	snprintf(rn, sizeof rn, "up.r%d", r);
+	up_tmp(rp, sizeof rp, rn);
+	uint8_t lh[30];
+	FILE *f = fopen(rp, "rb");
+	if (!f) return "Could not read the download.";
+	if (fseek(f, (long)((long long)e->off - up.reg[r].s), SEEK_SET) != 0 || fread(lh, 1, 30, f) != 30 || zx_u32(lh) != 0x04034b50u) {
+		fclose(f);
+		return "The package changed while downloading. Check again.";
+	}
+	long long dstart = (long long)e->off + 30 + zx_u16(lh + 26) + zx_u16(lh + 28);
+	if (dstart + (long long)e->csize - 1 > up.reg[r].e) { fclose(f); return "The download was too short."; }
+	if (e->method != 0 && e->method != 8) { fclose(f); return "Unsupported compression."; }
+	uint8_t *cbuf = malloc(e->csize ? e->csize : 1), *out = malloc(e->usize ? e->usize : 1);
+	if (!cbuf || !out) { fclose(f); free(cbuf); free(out); return "Out of memory."; }
+	const char *err = NULL;
+	if (fseek(f, (long)(dstart - up.reg[r].s), SEEK_SET) != 0 || fread(cbuf, 1, e->csize, f) != e->csize) err = "The download was too short.";
+	fclose(f);
+	if (!err) {
+		if (e->method == 0) { if (e->csize != e->usize) err = "Corrupt file in the package."; else memcpy(out, cbuf, e->usize); }
+		else if (zx_inflate(cbuf, e->csize, out, e->usize)) err = "Corrupt file in the package.";
+	}
+	if (!err && zx_crc32(0, out, e->usize) != e->crc) err = "A downloaded file failed its checksum. Try again.";
+	if (!err) {
+		char path[900], part[920];
+		comp_path(c, e->name, path, sizeof path);
+		mkparent(path);
+		snprintf(part, sizeof part, "%s.gitroms-part", path);
+		FILE *w = fopen(part, "wb");
+		if (!w) err = "Could not write to the ports folder.";
+		else {
+			if (e->usize && fwrite(out, 1, e->usize, w) != e->usize) err = "Could not write (card full?).";
+			if (fclose(w) != 0 && !err) err = "Could not write (card full?).";
+			if (!err) {
+				chmod(part, (e->mode ? e->mode : 0644) | 0600);
+				if (rename(part, path) != 0) err = "Could not replace a file.";
+			}
+			if (err) remove(part);
+		}
+	}
+	free(cbuf);
+	free(out);
+	return err;
+}
+
+static void up_extract_step(Comp *c) {
+	uint32_t t0 = SDL_GetTicks();
+	snprintf(up.step, sizeof up.step, "Installing files");
+	while (up.ex_i < c->dir.n) {
+		if (c->need[up.ex_i]) {
+			const ZxEnt *e = &c->dir.e[up.ex_i];
+			const char *err = up_extract_entry(c, e);
+			if (err) { logf_("extract %s: %s", e->name, err); up_fail(c, err); return; }
+			up.p_done += e->usize;
+		}
+		up.ex_i++;
+		if (SDL_GetTicks() - t0 > 30) return;
+	}
+	char m[120];
+	snprintf(m, sizeof m, "Updated %d files", c->nneed);
+	up.updated[up.ci] = 1;
+	if (c->self) up.restart_needed = 1;
+	comp_runtime_free(c);
+	up_finish_comp(c, CS_OK, m);
+}
+
+static void up_do_cancel(void) {
+	job_cancel(&up.job);
+	if (up.ci >= 0 && up.ci < ncomp) {
+		Comp *c = &comp[up.ci];
+		char part[920], path[900];
+		if (c->kind == 1) { comp_path(c, "", path, sizeof path); snprintf(part, sizeof part, "%s.gitroms-part", path); remove(part); }
+		c->status = CS_ERROR;
+		scpy(c->msg, sizeof c->msg, "Cancelled. Press Select to check again.");
+		comp_runtime_free(c);
+	}
+	up_cleanup_tmp();
+	up.phase = UPH_NONE;
+	up.cancel = 0;
+	if (screen == SC_UPDATING) screen = SC_UPDATES;
+}
+
+static void up_step(uint32_t now) {
+	(void)now;
+	if (up.phase == UPH_NONE) return;
+	if (up.cancel) { up_do_cancel(); return; }
+	Comp *c = &comp[up.ci];
+	char p[480];
+	switch (up.phase) {
+	case UPH_FILEDL: {
+		char path[900], part[920];
+		comp_path(c, "", path, sizeof path);
+		snprintf(part, sizeof part, "%s.gitroms-part", path);
+		up.p_done = file_size(part);
+		if (!job_poll(&up.job)) return;
+		if (up.job.rc != 0) { remove(part); up_fail_job(c); return; }
+		if (c->total > 0 && file_size(part) != c->total) { remove(part); up_fail(c, "The download was incomplete."); return; }
+		chmod(part, 0644);
+		if (rename(part, path) != 0) { remove(part); up_fail(c, "Could not replace the file."); return; }
+		up.updated[up.ci] = 1;
+		up_finish_comp(c, CS_OK, "Updated");
+		return;
+	}
+	case UPH_SIZE: {
+		if (!job_poll(&up.job)) return;
+		if (up.job.rc != 0 && up.job.rc != 63) { up_fail_job(c); return; }
+		int ro;
+		up_tmp(p, sizeof p, "up.hdr");
+		long long tot = hdr_total(p, &ro);
+		if (up.job.rc == 63) ro = 0;                 /* the server ignored the range request */
+		if (tot <= 0) { up_fail(c, "Could not read the file size."); return; }
+		c->total = tot;
+		c->rangeok = ro;
+		long long T = tot < TAIL_BYTES ? tot : TAIL_BYTES;
+		up.tail_start = tot - T;
+		up.tail_file_off = ro ? 0 : up.tail_start;
+		if (!up_job(c, "up.tail", up.tail_start, ro ? tot - 1 : -1, NULL, 0, ro ? 120 : 1800)) { up_fail(c, "Could not start curl."); return; }
+		up.phase = UPH_TAIL;
+		return;
+	}
+	case UPH_TAIL:
+		if (!job_poll(&up.job)) return;
+		if (up.job.rc != 0) { up_fail_job(c); return; }
+		up_tail_ready(c);
+		return;
+	case UPH_CD: {
+		if (!job_poll(&up.job)) return;
+		if (up.job.rc != 0) { up_fail_job(c); return; }
+		up_tmp(p, sizeof p, "up.cd");
+		uint8_t *cd = read_range(p, 0, up.cd_size);
+		if (!cd) { up_fail(c, "The download was incomplete."); return; }
+		up_cd_ready(c, cd);
+		free(cd);
+		return;
+	}
+	case UPH_CMP: up_cmp_step(c); return;
+	case UPH_FETCH: {
+		char rn[24];
+		snprintf(rn, sizeof rn, "up.r%d", up.ri);
+		up_tmp(p, sizeof p, rn);
+		up.p_done = up.p_base + file_size(p);
+		if (!job_poll(&up.job)) return;
+		if (up.job.rc != 0) { up_fail_job(c); return; }
+		long long want = up.reg[up.ri].e - up.reg[up.ri].s + 1;
+		if (file_size(p) != want) { up_fail(c, "The download was incomplete."); return; }
+		up.p_base += want;
+		up.ri++;
+		if (up.ri < up.nreg) {
+			snprintf(rn, sizeof rn, "up.r%d", up.ri);
+			if (!up_job(c, rn, up.reg[up.ri].s, up.reg[up.ri].e, NULL, 0, 3600)) { up_fail(c, "Could not start curl."); return; }
+			return;
+		}
+		up.ex_i = 0;
+		up.p_done = 0;
+		up.p_total = c->need_u;
+		up.phase = UPH_EXTRACT;
+		return;
+	}
+	case UPH_EXTRACT: up_extract_step(c); return;
+	}
+}
+
+static void up_start_check(const int *only) {
+	if (up.phase != UPH_NONE) return;
+	up.mode = 0;
+	for (int i = 0; i < ncomp; i++) up.flag[i] = only ? only[i] : 1;
+	up.ci = -1;
+	up.cancel = 0;
+	up_advance();
+}
+
+static int up_available(void) {
+	int n = 0;
+	for (int i = 0; i < ncomp; i++) if (comp[i].status == CS_UPDATE || comp[i].status == CS_NEW) n++;
+	return n;
+}
+
+static void up_start_update(void) {
+	if (up.phase != UPH_NONE || !up_available()) return;
+	up.mode = 1;
+	memset(up.updated, 0, sizeof up.updated);
+	up.ci = -1;
+	up.cancel = 0;
+	screen = SC_UPDATING;
+	up_advance();
+}
+
+static void updates_open(void) {
+	if (!ncomp) comps_load();
+	comp_sel = 0;
+	screen = SC_UPDATES;
+	if (up.phase == UPH_NONE) up_start_check(NULL);
+}
+
 /* ---------------------------------------------------------------- input */
 static void do_refresh(void) {
 	if (!have_cur) return;
@@ -1216,7 +1827,10 @@ static void act(int a) {
 			Frame f;
 			memset(&f, 0, sizeof f);
 			f.kind = K_DIR;
-			if (it->kind == K_REPO) {
+			if (it->kind == K_UPD) {
+				up_from = SC_LIST;
+				updates_open();
+			} else if (it->kind == K_REPO) {
 				scpy(f.repo, sizeof f.repo, it->path);
 				scpy(f.branch, sizeof f.branch, it->branch);
 				begin_load(&f, M_PUSH, 0, 0);
@@ -1273,12 +1887,25 @@ static void act(int a) {
 		if (err_fatal) { if (a == A_OK || a == A_BACK) g_run = 0; break; }
 		if (a == A_OK) { if (have_cur) screen = SC_LIST; else load_root(); }
 		else if (a == A_BACK) { if (have_cur) screen = SC_LIST; else screen = SC_EXIT; }
+		else if (a == A_INFO) { up_from = SC_ERROR; updates_open(); }   /* updates do not need the GitHub API */
 		else if (a == A_START || a == A_SELECT) load_root();
 		break;
 	case SC_HISTORY:
 		if (a == A_UP && hist_scroll > 0) hist_scroll--;
 		else if (a == A_DOWN && hist_scroll < nhist - 10) hist_scroll++;
 		else if (a == A_BACK || a == A_START) screen = prev_screen;
+		break;
+	case SC_UPDATES:
+		if (a == A_UP && comp_sel > 0) comp_sel--;
+		else if (a == A_DOWN && comp_sel < ncomp - 1) comp_sel++;
+		else if (a == A_OK) {
+			if (up.phase == UPH_NONE && up_available()) up_start_update();
+			else if (up.phase == UPH_NONE && up.restart_needed) g_run = 0;
+		} else if (a == A_SELECT) up_start_check(NULL);
+		else if (a == A_BACK) { if (up.phase != UPH_NONE) up.cancel = 1; screen = up_from; }
+		break;
+	case SC_UPDATING:
+		if (a == A_BACK) up.cancel = 1;
 		break;
 	case SC_SYSINFO: {
 		int rows = 12, mx = si_n > rows ? si_n - rows : 0;
@@ -1473,7 +2100,7 @@ static void draw_list(void) {
 	char right[40], title[300];
 	if (cur.kind == K_REPO) {
 		snprintf(title, sizeof title, "%s", g_user);
-		snprintf(right, sizeof right, "%d repos", nitems);
+		snprintf(right, sizeof right, "%d repos", nitems > 0 && items[0].kind == K_UPD ? nitems - 1 : nitems);
 	} else if (cur.kind == FK_REL) {
 		const char *r = strchr(cur.repo, '/');
 		snprintf(title, sizeof title, "%s releases", r ? r + 1 : cur.repo);
@@ -1597,7 +2224,7 @@ static void draw_screen(uint32_t now) {
 	case SC_ERROR:
 		header("Problem", NULL);
 		text_wrap(32, 90, err_text, C_BAD, 2, VW - 64, 8);
-		footer(err_fatal ? "A quit" : have_cur ? "A/B back  START retry" : "A retry  B quit");
+		footer(err_fatal ? "A quit" : have_cur ? "A/B back  START retry  X updates" : "A retry  B quit  X updates");
 		break;
 	case SC_HISTORY:
 		snprintf(buf, sizeof buf, "%d saved", nhist);
@@ -1614,6 +2241,38 @@ static void draw_screen(uint32_t now) {
 		}
 		footer("UP/DOWN scroll  B back");
 		break;
+	case SC_UPDATES: {
+		header("Updates", NULL);
+		for (int i = 0; i < ncomp; i++) {
+			Comp *c = &comp[i];
+			int y = 56 + i * 58;
+			if (i == comp_sel) fill(8, y, VW - 16, 54, C_RAISED);
+			text_fit(16, y + 6, c->name, C_FG, 2, VW - 40);
+			uint32_t col = c->status == CS_OK ? C_GOOD : (c->status == CS_UPDATE || c->status == CS_NEW) ? C_SIGNAL : c->status == CS_ERROR ? C_BAD : C_MUTED;
+			const char *m = c->status == CS_CHECKING ? "Checking..." : c->status == CS_IDLE ? "Waiting..." : c->status == CS_UPDATING ? "Updating..." : c->msg;
+			text_fit(16, y + 30, m, col, 2, VW - 40);
+		}
+		if (up.restart_needed) text_fit(16, 410, "GitROMs was updated. Quit and reopen it.", C_SIGNAL, 2, VW - 32);
+		if (up.phase != UPH_NONE) footer("Checking...  B back");
+		else if (up_available()) footer("A update  SEL check again  B back");
+		else if (up.restart_needed) footer("A quit  SEL check again  B back");
+		else footer("SEL check again  B back");
+		break;
+	}
+	case SC_UPDATING: {
+		header("Updating", NULL);
+		Comp *c = &comp[up.ci < 0 ? 0 : up.ci];
+		text_fit(32, 80, c->name, C_FG, 2, VW - 64);
+		text_fit(32, 112, up.step, C_MUTED, 2, VW - 64);
+		progress(32, 150, VW - 64, up.p_total > 0 ? (double)up.p_done / (double)up.p_total : -1, now);
+		char a[32], b[32];
+		human(a, sizeof a, up.p_done);
+		human(b, sizeof b, up.p_total);
+		snprintf(buf, sizeof buf, "%s of %s", a, b);
+		if (up.phase == UPH_FETCH || up.phase == UPH_EXTRACT || up.phase == UPH_FILEDL) text(32, 184, buf, C_MUTED, 2);
+		footer("B cancel");
+		break;
+	}
 	case SC_SYSINFO: {
 		int rows = 12;
 		if (si_running) {
@@ -1673,7 +2332,7 @@ static void test_step(uint32_t now) {
 	if (tstep >= ntsteps) { g_run = 0; return; }
 	char *st = tsteps[tstep];
 	if (!strcmp(st, "idle")) {
-		if (!task_active()) { tstep++; twait_until = now + 200; }
+		if (!task_active() && up.phase == UPH_NONE) { tstep++; twait_until = now + 200; }
 		return;
 	}
 	tstep++;
@@ -1686,6 +2345,9 @@ static void test_step(uint32_t now) {
 	else if (!strncmp(st, "pu=", 3)) input_release(act_from_name(st + 3), SRC_PAD);
 	else if (!strcmp(st, "logsel")) logf_("sel=%d", have_cur ? cur.sel : -1);
 	else if (!strcmp(st, "logscr")) logf_("scr=%d sp=%d", screen, sp);
+	else if (!strcmp(st, "logupd")) {
+		for (int i = 0; i < ncomp; i++) logf_("upd[%d] %s st=%d nneed=%d msg=%s", i, comp[i].name, comp[i].status, comp[i].nneed, comp[i].msg);
+	}
 	else if (!strncmp(st, "jb=", 3) || !strncmp(st, "ju=", 3)) { /* raw joystick button down / up */
 		SDL_Event e;
 		memset(&e, 0, sizeof e);
@@ -1756,6 +2418,11 @@ int main(void) {
 		if (is_dir(ROM_ROOTS[i]) && access(ROM_ROOTS[i], W_OK) == 0) scpy(g_romroot, sizeof g_romroot, ROM_ROOTS[i]);
 	logf_("rom root: %s", g_romroot[0] ? g_romroot : "(none)");
 	hist_load();
+	if ((e = getenv("GITROMS_PORTS")) && *e) scpy(g_ports, sizeof g_ports, e);
+	else {
+		scpy(g_ports, sizeof g_ports, g_home);                 /* <ports>/gitroms/data -> <ports> */
+		for (int up_dirs = 0; up_dirs < 2; up_dirs++) { char *sl = strrchr(g_ports, '/'); if (sl) *sl = 0; }
+	}
 	snprintf(g_instpath, sizeof g_instpath, "%s/installed.txt", g_home);
 	inst_load();
 
@@ -1846,6 +2513,7 @@ int main(void) {
 			}
 		}
 		input_tick(t0);
+		up_step(t0);
 		update_task(t0);
 		si_poll();
 		test_step(t0);
@@ -1860,6 +2528,7 @@ int main(void) {
 	}
 
 	si_stop();
+	if (up.phase != UPH_NONE) up_do_cancel();
 	if (task_active()) {
 		job_cancel(&task.job);
 		if (task.type == T_DL) remove(dl.part);

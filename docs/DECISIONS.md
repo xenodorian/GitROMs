@@ -55,3 +55,23 @@ so the result needs only GLIBC_2.17 (aarch64) or GLIBC_2.4 (armhf).
 - That the roms partition is the parent of `ports/` (assumed; the app also
   scans /roms, /roms2 and others).
 - The device's glibc version is unknown; the build targets 2.17 or newer.
+
+## Push-button updates (3.5)
+
+- Components (GitROMs, SGBA bundle, a game) are listed in `gitroms/components.conf`.
+- A zip bundle is checked by reading only its central directory over HTTP byte
+  ranges (GitHub release assets accept `bytes=a-b`, but not `bytes=-N` suffix
+  ranges; the file size comes from a `Range: bytes=0-0` probe). Every file on the
+  card is compared by size and CRC32; only differing members are fetched (nearby
+  ones merged into few requests; the whole file if more than 60% is needed or the
+  server ignores ranges), inflated by the built-in `zipx.h`, CRC-checked, written
+  to `*.gitroms-part` and renamed over the old file. Executable bits come from the
+  zip. Nothing is recorded: the files on the card are the state.
+- Verified against the real SGBA release: 668 files, 93 MB, all inflate and match;
+  after damaging 5 files the update fetched 16 KB in 5 requests.
+- Single files (games) are compared by size and the last 128 KB. A change in the
+  middle of a non-zip file that keeps the same size would be missed; `.sgba` and
+  `.zip` files always change their central directory.
+- Interrupting an update leaves a mix of old and new files; the next check fixes it.
+- Not verified on the device: speed of the CRC pass over a 93 MB bundle on the
+  R36S, and Wi-Fi behaviour during a 30 MB first install.

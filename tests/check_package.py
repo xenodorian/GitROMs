@@ -23,7 +23,7 @@ with zipfile.ZipFile(ZIP) as z:
     check("GitROMs.sh" in names, "launcher is at zip root (lands directly in ports/)")
     check(all(n == "GitROMs.sh" or n.startswith("gitroms/") for n in names), "only GitROMs.sh and gitroms/ are packaged")
     for need in ["gitroms/gitroms.aarch64", "gitroms/gitroms.armhf", "gitroms/gitroms.gptk",
-                 "gitroms/gitroms.conf", "gitroms/collect.sh", "gitroms/port.json", "gitroms/README.md"]:
+                 "gitroms/gitroms.conf", "gitroms/components.conf", "gitroms/collect.sh", "gitroms/port.json", "gitroms/README.md"]:
         check(need in names, f"contains {need}")
     check(not any(".." in n or n.startswith("/") for n in names), "no unsafe paths")
     check(not any(n.endswith((".pyc", ".log", ".part", ".lua")) or "/data/" in n for n in names), "no build output, logs, runtime data or LOVE files")

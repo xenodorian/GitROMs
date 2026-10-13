@@ -11,6 +11,8 @@ Extract it into the **ports** folder on the roms partition so you get
 `ports/GitROMs.sh` and `ports/gitroms/`, then open Ports > GitROMs.
 Details: [port/gitroms/README.md](port/gitroms/README.md).
 
+**Updates:** open `[Check for updates]` at the top of the repository list. It checks GitROMs, the SGBA emulator and your games, and one press of A downloads only the changed files and installs them.
+
 ## Status
 
 Built and tested on a PC only (x86_64 build, headless SDL, mock GitHub API;
