@@ -19,6 +19,7 @@ PORTS="$T/ports"; mkdir -p "$PORTS/gitroms/data" "$T/roms"
 cat > "$T/components.conf" <<CONF
 Bundle|zip|http://127.0.0.1:$PORT/bundle.zip|.|README.txt,gitroms/gitroms.conf|self
 Game|file|http://127.0.0.1:$PORT/game.sgba|sgba/games/game.sgba||
+GameDir|zip|http://127.0.0.1:$PORT/game.sgba|sgba/games/gamedir||||sgba/games/legacy.sgba
 CONF
 fail=0
 chk() { if eval "$2"; then echo "PASS $1"; else echo "FAIL $1"; fail=1; fi; }
@@ -40,6 +41,7 @@ app "$OPEN;logscr;logupd"
 chk "update screen opens (screen 10)" "grep -q 'scr=10 sp=0' \"\$LOG\""
 chk "bundle reported as Not installed (125 files)" "st 0 | grep -q 'st=4 nneed=125'"
 chk "game reported as Not installed" "st 1 | grep -q 'st=4'"
+mkdir -p "$PORTS/sgba/games"; echo old > "$PORTS/sgba/games/legacy.sgba"
 app "$OPEN;act=confirm;idle;logupd"
 chk "install: bundle then re-check says up to date" "st 0 | grep -q 'st=2 .*msg=Updated\\|st=2 nneed=0'"
 chk "install: game up to date" "st 1 | grep -q 'st=2'"
@@ -54,6 +56,8 @@ for i in z.infolist():
 raise SystemExit(bad)
 PY"
 chk "executable bit set on SGBA.sh and the python binary" "[ -x \"$PORTS/SGBA.sh\" ] && [ -x \"$PORTS/sgba/python/bin/python3\" ] && [ ! -x \"$PORTS/README.txt\" ]"
+chk "a .sgba can be unpacked into a game folder (main.py there)" "[ -s \"$PORTS/sgba/games/gamedir/main.py\" ] && [ -s \"$PORTS/sgba/games/gamedir/manifest.json\" ]"
+chk "the old single-file copy was removed once the folder was complete" "[ ! -e \"$PORTS/sgba/games/legacy.sgba\" ] && st 2 | grep -q 'st=2'"
 chk "game installed to sgba/games/" "[ -s \"$PORTS/sgba/games/game.sgba\" ]"
 chk "no temp or partial files left" "[ -z \"\$(find \"$PORTS\" -name '*.gitroms-part')\" ] && [ -z \"\$(ls \"$PORTS/gitroms/data/tmp\" 2>/dev/null | grep -v '^up.err\$')\" ]"
 

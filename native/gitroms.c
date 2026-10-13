@@ -1208,7 +1208,7 @@ enum { CS_IDLE, CS_CHECKING, CS_OK, CS_UPDATE, CS_NEW, CS_ERROR, CS_UPDATING };
 enum { UPH_NONE, UPH_SIZE, UPH_TAIL, UPH_CD, UPH_CMP, UPH_FETCH, UPH_EXTRACT, UPH_FILEDL, UPH_STAMP };
 
 typedef struct {
-	char name[48], url[360], dest[240], keep[240], src[200];
+	char name[48], url[360], dest[240], keep[240], src[200], retire[240];
 	char stamp[96], rec[96], pretty[40], sent[3][200];
 	int nsent;
 	int kind, self;          /* kind 0 = zip bundle, 1 = single file */
@@ -1242,7 +1242,7 @@ static struct {
 	int flag[MAXCOMP], updated[MAXCOMP];
 } up;
 
-static void comp_add(const char *name, int kind, const char *url, const char *dest, const char *keep, int self, const char *src) {
+static void comp_add(const char *name, int kind, const char *url, const char *dest, const char *keep, int self, const char *src, const char *retire) {
 	if (ncomp >= MAXCOMP) return;
 	Comp *c = &comp[ncomp++];
 	memset(c, 0, sizeof *c);
@@ -1252,6 +1252,7 @@ static void comp_add(const char *name, int kind, const char *url, const char *de
 	scpy(c->dest, sizeof c->dest, dest);
 	scpy(c->keep, sizeof c->keep, keep);
 	scpy(c->src, sizeof c->src, src);
+	scpy(c->retire, sizeof c->retire, retire);
 	c->self = self;
 }
 
@@ -1329,13 +1330,13 @@ static void comps_load(void) {
 	ncomp = 0;
 	if (buf) {
 		for (char *line = strtok(buf, "\n"); line; line = strtok(NULL, "\n")) {
-			char *f[7] = {0};
+			char *f[8] = {0};
 			int k = 0;
 			size_t l = strlen(line);
 			while (l && (line[l - 1] == '\r' || line[l - 1] == ' ')) line[--l] = 0;
 			if (!l || line[0] == '#') continue;
 			char *p = line;
-			while (k < 7) {
+			while (k < 8) {
 				f[k++] = p;
 				char *t = strchr(p, '|');
 				if (!t) break;
@@ -1343,31 +1344,42 @@ static void comps_load(void) {
 				p = t + 1;
 			}
 			if (k < 4 || !f[0][0] || !f[2][0]) continue;
-			comp_add(f[0], !strcmp(f[1], "file"), f[2], f[3], k > 4 ? f[4] : "", k > 5 && !strcmp(f[5], "self"), k > 6 ? f[6] : "");
+			comp_add(f[0], !strcmp(f[1], "file"), f[2], f[3], k > 4 ? f[4] : "", k > 5 && !strcmp(f[5], "self"), k > 6 ? f[6] : "", k > 7 ? f[7] : "");
 		}
 		free(buf);
 	}
 	/* Built-in entries are added when no line of components.conf uses the same URL, so a
 	 * card with an older components.conf still gets new ones (an unwanted one can be
 	 * hidden by pointing a line at the same URL and giving it another name). */
-	static const struct { const char *name, *url, *dest, *keep, *src; int kind, self; } def[] = {
+	static const struct { const char *name, *url, *dest, *keep, *src, *retire; int kind, self; } def[] = {
 		{"GitROMs", "https://github.com/xenodorian/GitROMs/raw/main/dist/GitROMs.zip", ".",
-		 "gitroms/gitroms.conf,gitroms/components.conf", "commit:xenodorian/GitROMs:dist/GitROMs.zip", 0, 1},
+		 "gitroms/gitroms.conf,gitroms/components.conf", "commit:xenodorian/GitROMs:dist/GitROMs.zip", "", 0, 1},
 		{"SGBA emulator", "https://github.com/xenodorian/SGBA/releases/download/latest/SGBA-arkos-aarch64.zip", ".",
-		 "README.txt", "", 0, 0},
+		 "README.txt", "", "", 0, 0},
+		/* The game is a .sgba (a zip). It is unpacked into the folder both launchers run
+		 * (the "Parry Perry" port and the SGBA menu), and the old single file is removed. */
 		{"Parry Perry (game)", "https://github.com/xenodorian/BibooSGBA/releases/download/latest/parry-perry.sgba",
-		 "sgba/games/parry-perry.sgba", "", "", 1, 0},
+		 "sgba/games/parry-perry", "", "", "sgba/games/parry-perry.sgba", 0, 0},
 		{"Pokemon War and Murder", "https://github.com/xenodorian/Pokemon-War-and-Murder/raw/main/roms/Pokemon%20War%20and%20Murder.gba",
-		 "../gba/Pokemon War and Murder.gba", "", "commit:xenodorian/Pokemon-War-and-Murder:roms/Pokemon%20War%20and%20Murder.gba", 1, 0},
+		 "../gba/Pokemon War and Murder.gba", "", "commit:xenodorian/Pokemon-War-and-Murder:roms/Pokemon%20War%20and%20Murder.gba", "", 1, 0},
 	};
+	/* Built-in entries are authoritative for their URL: a line of an older components.conf
+	 * with the same URL is brought up to date (name, kind, destination), and a missing one is added. */
 	for (size_t d = 0; d < sizeof def / sizeof def[0] && !getenv("GITROMS_NODEFAULTS"); d++) {
 		int have = 0;
 		for (int i = 0; i < ncomp; i++)
 			if (!strcmp(comp[i].url, def[d].url)) {
 				have = 1;
-				if (!comp[i].src[0]) scpy(comp[i].src, sizeof comp[i].src, def[d].src);   /* older line without a date source */
+				Comp *c = &comp[i];
+				scpy(c->name, sizeof c->name, def[d].name);
+				c->kind = def[d].kind;
+				scpy(c->dest, sizeof c->dest, def[d].dest);
+				scpy(c->keep, sizeof c->keep, def[d].keep);
+				scpy(c->src, sizeof c->src, def[d].src);
+				scpy(c->retire, sizeof c->retire, def[d].retire);
+				c->self = def[d].self;
 			}
-		if (!have) comp_add(def[d].name, def[d].kind, def[d].url, def[d].dest, def[d].keep, def[d].self, def[d].src);
+		if (!have) comp_add(def[d].name, def[d].kind, def[d].url, def[d].dest, def[d].keep, def[d].self, def[d].src, def[d].retire);
 	}
 	for (int i = 0; i < ncomp; i++) comp[i].status = CS_IDLE;
 	state_load();
@@ -1472,6 +1484,11 @@ static void up_fail_job(Comp *c) {
 
 static void up_finish_comp(Comp *c, int st, const char *msg) {
 	c->status = st;
+	if (st == CS_OK && c->retire[0] && c->kind == 0) {            /* the folder is complete: drop the old single-file copy */
+		char old[900];
+		snprintf(old, sizeof old, "%s/%s", g_ports, c->retire);
+		if (path_exists(old) && !remove(old)) logf_("removed old copy %s", old);
+	}
 	if (msg != c->msg) scpy(c->msg, sizeof c->msg, msg);   /* callers often pass c->msg itself */
 	up_cleanup_tmp();
 	up_advance();

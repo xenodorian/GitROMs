@@ -73,6 +73,11 @@ a good file. Your own `gitroms.conf` and `components.conf` are never overwritten
 It needs no accounts and uses none of GitHub's limited API requests. A single
 file (a game) is simply re-downloaded when its modified time changes.
 
+Parry Perry is installed as the folder `sgba/games/parry-perry/`, the one copy that
+both the "Parry Perry" port and the SGBA menu run. When that folder is complete,
+GitROMs deletes the old single file `sgba/games/parry-perry.sgba` so the game never
+exists in two places.
+
 The Pokemon War and Murder is built in: it is saved as `gba/Pokemon War and Murder.gba`
 next to your other GBA games. Save states are tied to the exact ROM, so after an
 update an old `.state` may not load; in-game saves are not touched.
