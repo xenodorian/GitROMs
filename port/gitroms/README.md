@@ -33,6 +33,14 @@ save a numbered copy). Downloads write to a `.gitroms-part` file and are
 renamed only when complete. Folder lists are cached for the session, so going
 back does not use up GitHub's 60-requests-per-hour anonymous limit.
 
+The left stick is not mapped on purpose: a worn stick near its centre sends
+rapid false presses. To use it for the list, add `left_analog_up = up` (and
+down/left/right) to `gitroms/gitroms.gptk`.
+
+Input is merged: the pad arrives both as a key (gptokeyb) and as an SDL button,
+and the OS auto-repeats held keys. GitROMs treats these as one press and
+repeats a held up/down itself at a steady speed.
+
 ## Updating files
 
 GitROMs remembers what it saved (`gitroms/data/installed.txt`). In a list, a

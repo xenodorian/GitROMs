@@ -43,7 +43,9 @@ typedef struct { uint32_t type; uint8_t pad[60]; } __attribute__((aligned(8))) S
 #define SDL_WINDOWPOS_CENTERED 0x2FFF0000
 #define SDL_QUIT 0x100
 #define SDL_KEYDOWN 0x300
+#define SDL_KEYUP 0x301
 #define SDL_CONTROLLERBUTTONDOWN 0x650
+#define SDL_CONTROLLERBUTTONUP 0x651
 #define SDL_CONTROLLERDEVICEADDED 0x653
 
 int SDL_Init(uint32_t);
@@ -76,7 +78,7 @@ void *SDL_GameControllerOpen(int);
 #define MAXITEMS 1500
 #define ROWS 12
 #define ROWH 30
-#define VERSION "3.2"
+#define VERSION "3.3"
 
 static uint32_t fb[VW * VH];
 
@@ -1295,13 +1297,44 @@ static void act(int a) {
 	}
 }
 
-static uint32_t last_act_at[16];
-static void fire(int a, int repeated, uint32_t now) {
+/* Input model: one "held" state per action, shared by every source.
+ * The pad reaches us twice (gptokeyb as a key, and SDL as a controller button),
+ * and the OS also auto-repeats held keys. Handling each event as a press made
+ * one tap jump several rows. Now: a press that arrives while the other source
+ * already holds the action is merged, OS auto-repeat events are ignored, and
+ * holding up/down repeats on our own steady timer. */
+#define SRC_KEY 1
+#define SRC_PAD 2
+#define REPEAT_DELAY_MS 380
+#define REPEAT_RATE_MS 85
+#define BOUNCE_MS 125   /* a second fresh press of one action inside this is the same tap */
+static struct { int src; uint32_t next_rep, last_fire; } hold[16];
+
+static void input_press(int a, int src, uint32_t now) {
 	if (a <= A_NONE || a > A_INFO) return;
-	/* gptokeyb keys and controller events can both arrive for one press */
-	if (!repeated && last_act_at[a] && now - last_act_at[a] < 50) return;
-	last_act_at[a] = now;
+	if (hold[a].src) { hold[a].src |= src; return; }       /* other source already holds it */
+	hold[a].src = src;
+	hold[a].next_rep = now + REPEAT_DELAY_MS;
+	if (hold[a].last_fire && now - hold[a].last_fire < BOUNCE_MS) return;
+	hold[a].last_fire = now;
 	act(a);
+}
+
+static void input_release(int a, int src) {
+	if (a <= A_NONE || a > A_INFO) return;
+	hold[a].src &= ~src;
+}
+
+static void input_tick(uint32_t now) {
+	static const int rep[] = {A_UP, A_DOWN};              /* paging and buttons never auto-repeat */
+	for (int i = 0; i < 2; i++) {
+		int a = rep[i];
+		if (hold[a].src && now >= hold[a].next_rep) {
+			hold[a].last_fire = now;
+			hold[a].next_rep = now + REPEAT_RATE_MS;
+			act(a);
+		}
+	}
 }
 
 static int key_action(int sc) {
@@ -1640,6 +1673,11 @@ static void test_step(uint32_t now) {
 	if (!strncmp(st, "wait=", 5)) twait_until = now + (uint32_t)(atof(st + 5) * 1000);
 	else if (!strncmp(st, "act=", 4)) { act(act_from_name(st + 4)); twait_until = now + 100; }
 	else if (!strncmp(st, "shot=", 5)) tshot = st + 5;
+	else if (!strncmp(st, "kd=", 3)) input_press(act_from_name(st + 3), SRC_KEY, now);
+	else if (!strncmp(st, "ku=", 3)) input_release(act_from_name(st + 3), SRC_KEY);
+	else if (!strncmp(st, "pd=", 3)) input_press(act_from_name(st + 3), SRC_PAD, now);
+	else if (!strncmp(st, "pu=", 3)) input_release(act_from_name(st + 3), SRC_PAD);
+	else if (!strcmp(st, "logsel")) logf_("sel=%d", have_cur ? cur.sel : -1);
 }
 
 /* ----------------------------------------------------------------- main */
@@ -1745,20 +1783,23 @@ int main(void) {
 		SDL_Event ev;
 		while (SDL_PollEvent(&ev)) {
 			if (ev.type == SDL_QUIT) g_run = 0;
-			else if (ev.type == SDL_KEYDOWN) {
+			else if (ev.type == SDL_KEYDOWN || ev.type == SDL_KEYUP) {
 				int32_t scan;
 				memcpy(&scan, (uint8_t *)&ev + 16, 4);
-				int rep = ((uint8_t *)&ev)[13];
 				int a = key_action((int)scan);
-				if (!(rep && a != A_UP && a != A_DOWN && a != A_LEFT && a != A_RIGHT)) fire(a, rep, t0);
+				if (ev.type == SDL_KEYUP) input_release(a, SRC_KEY);
+				else if (!((uint8_t *)&ev)[13]) input_press(a, SRC_KEY, t0);   /* ignore OS auto-repeat */
 			} else if (ev.type == SDL_CONTROLLERBUTTONDOWN) {
-				fire(pad_action(((uint8_t *)&ev)[12]), 0, t0);
+				input_press(pad_action(((uint8_t *)&ev)[12]), SRC_PAD, t0);
+			} else if (ev.type == SDL_CONTROLLERBUTTONUP) {
+				input_release(pad_action(((uint8_t *)&ev)[12]), SRC_PAD);
 			} else if (ev.type == SDL_CONTROLLERDEVICEADDED) {
 				int32_t which;
 				memcpy(&which, (uint8_t *)&ev + 8, 4);
 				SDL_GameControllerOpen(which);
 			}
 		}
+		input_tick(t0);
 		update_task(t0);
 		si_poll();
 		test_step(t0);
