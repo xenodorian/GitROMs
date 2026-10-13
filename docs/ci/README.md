@@ -6,10 +6,9 @@ then `[Releases]`. Files saved from there are tracked, and the list shows
 `UPD` next to a file whose release asset has changed since you saved it.
 
 The two snippets here keep one rolling release named `latest` up to date on
-every push to `main` and on manual runs. They were applied on a branch named
-`claude/publish-latest-release` in xenodorian/SGBA and xenodorian/BibooSGBA and
-verified with real CI runs (see the repos' Releases pages). Merge those
-branches to make `main` publish on every push.
+every push to `main` and on manual runs. They are applied on `main` in
+xenodorian/SGBA and xenodorian/BibooSGBA and were verified with real CI runs
+(see the repos' Releases pages).
 
 Notes:
 - The release must NOT be a pre-release. GitHub's `releases/latest` API ignores

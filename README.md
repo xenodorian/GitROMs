@@ -4,7 +4,7 @@ Controller-driven GitHub ROM browser for the R36S (ArkOS). A native SDL2
 program: no web browser, no login, no LOVE or Python runtime to install.
 It downloads files into the matching `roms/<system>/` folders.
 
-**Download:** [dist/GitROMs.zip](https://github.com/xenodorian/GitROMs/raw/claude/amazing-allen-ua012v/dist/GitROMs.zip)
+**Download:** [dist/GitROMs.zip](https://github.com/xenodorian/GitROMs/raw/main/dist/GitROMs.zip)
 (checksum: `dist/GitROMs.zip.sha256`)
 
 Extract it into the **ports** folder on the roms partition so you get
