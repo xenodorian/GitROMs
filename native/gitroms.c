@@ -1357,8 +1357,8 @@ static void comps_load(void) {
 		 "README.txt", "", 0, 0},
 		{"Parry Perry (game)", "https://github.com/xenodorian/BibooSGBA/releases/download/latest/parry-perry.sgba",
 		 "sgba/games/parry-perry.sgba", "", "", 1, 0},
-		{"Pokemon Outlaw Mod", "https://github.com/xenodorian/Pokemon-Outlaw-Mod/raw/main/roms/Pokemon%20War%20and%20Murder.gba",
-		 "../gba/Pokemon Outlaw Mod.gba", "", "commit:xenodorian/Pokemon-Outlaw-Mod:roms/Pokemon%20War%20and%20Murder.gba", 1, 0},
+		{"Pokemon War and Murder", "https://github.com/xenodorian/Pokemon-War-and-Murder/raw/main/roms/Pokemon%20War%20and%20Murder.gba",
+		 "../gba/Pokemon War and Murder.gba", "", "commit:xenodorian/Pokemon-War-and-Murder:roms/Pokemon%20War%20and%20Murder.gba", 1, 0},
 	};
 	for (size_t d = 0; d < sizeof def / sizeof def[0] && !getenv("GITROMS_NODEFAULTS"); d++) {
 		int have = 0;
