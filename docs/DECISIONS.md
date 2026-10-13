@@ -61,17 +61,27 @@ so the result needs only GLIBC_2.17 (aarch64) or GLIBC_2.4 (armhf).
 - Components (GitROMs, SGBA bundle, a game) are listed in `gitroms/components.conf`.
 - A zip bundle is checked by reading only its central directory over HTTP byte
   ranges (GitHub release assets accept `bytes=a-b`, but not `bytes=-N` suffix
-  ranges; the file size comes from a `Range: bytes=0-0` probe). Every file on the
+  ranges; the file size comes from a `Range: bytes=0-0` probe). When the stamp
+  differs, every file on the
   card is compared by size and CRC32; only differing members are fetched (nearby
   ones merged into few requests; the whole file if more than 60% is needed or the
   server ignores ranges), inflated by the built-in `zipx.h`, CRC-checked, written
   to `*.gitroms-part` and renamed over the old file. Executable bits come from the
-  zip. Nothing is recorded: the files on the card are the state.
+  zip. The recorded stamp only gates the compare.
 - Verified against the real SGBA release: 668 files, 93 MB, all inflate and match;
   after damaging 5 files the update fetched 16 KB in 5 requests.
-- Single files (games) are compared by size and the last 128 KB. A change in the
-  middle of a non-zip file that keeps the same size would be missed; `.sgba` and
-  `.zip` files always change their central directory.
+- Decision input is the remote modified time, not size (user request). Release
+  assets send `Last-Modified` on the same `Range: bytes=0-0` probe. raw.githubusercontent
+  sends only an ETag, so the GitROMs component uses `commit:owner/repo:path`, which
+  reads the latest commit date from the commits API (falls back to the ETag if the
+  API is unreachable). The stamp is saved in `gitroms/data/updates.txt` with up to
+  three sentinel files. Same stamp and sentinels present: "Up to date" with no
+  download beyond the 1 byte probe. Different or unrecorded stamp: the CRC compare
+  picks the files to fetch (zip), or the file is re-downloaded (single file). A
+  touched but unchanged bundle reports up to date and records the new stamp.
+- Caveat: a file deleted by hand that is not a sentinel is not noticed until the
+  stamp changes. Clock accuracy on the device is irrelevant, only server values
+  are compared.
 - Interrupting an update leaves a mix of old and new files; the next check fixes it.
 - Not verified on the device: speed of the CRC pass over a 93 MB bundle on the
   R36S, and Wi-Fi behaviour during a 30 MB first install.

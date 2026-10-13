@@ -61,7 +61,30 @@ chk "no temp or partial files left" "[ -z \"\$(find \"$PORTS\" -name '*.gitroms-
 srv /__reset
 app "$OPEN;logupd"
 chk "second check: bundle up to date" "st 0 | grep -q 'st=2'"
-B=$(stat_ bundle.zip); chk "second check read only the bundle file list ($B of ~2.7 MB bytes)" "[ $B -lt 300000 ]"
+chk "second check: game up to date" "st 1 | grep -q 'st=2'"
+B=$(stat_ bundle.zip); chk "second check trusted the modified time and read $B bytes" "[ $B -lt 100 ]"
+chk "up to date message shows the modified date" "st 0 | grep -q 'modified .* UTC'"
+chk "modified times were recorded in updates.txt" "grep -q '^Bundle	' \"$PORTS/gitroms/data/updates.txt\" && grep -q '^Game	' \"$PORTS/gitroms/data/updates.txt\""
+
+# 2b. same content but a newer modified time: bundle re-compares and stays up to date, game is offered
+srv "/__touch?path=/bundle.zip"; srv "/__touch?path=/game.sgba"; srv /__reset
+app "$OPEN;logupd"
+chk "touched bundle: file compare finds nothing to update" "st 0 | grep -q 'st=2 nneed=0'"
+chk "touched game: offered as an update (modified time is what counts)" "st 1 | grep -q 'st=3'"
+srv /__reset
+app "$OPEN;act=confirm;idle;logupd"
+app "$OPEN;logupd"
+chk "after the game refresh both are up to date again" "st 0 | grep -q 'st=2' && st 1 | grep -q 'st=2'"
+
+# 2c. a file from the bundle was deleted by hand: the check notices
+rm -f "$PORTS/sgba/lib/mod119.py" "$PORTS/sgba/lib/mod000.py" "$PORTS/sgba/data/conf.json"
+app "$OPEN;logupd"
+chk "missing files are noticed even when the stamp matches" "st 0 | grep -q 'st=2' || st 0 | grep -q 'st=3'"
+srv "/__touch?path=/bundle.zip"
+app "$OPEN;logupd"
+chk "after a new modified time the missing files show up" "st 0 | grep -q 'st=3'"
+app "$OPEN;act=confirm;idle;logupd"
+chk "missing files restored" "[ -f \"$PORTS/sgba/lib/mod119.py\" ] && [ -f \"$PORTS/sgba/lib/mod000.py\" ] && [ -f \"$PORTS/sgba/data/conf.json\" ]"
 
 # 3. upstream changes 2 files, adds 1; local README was edited (kept), conf is kept
 echo "my local readme" > "$PORTS/README.txt"

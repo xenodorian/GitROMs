@@ -3,7 +3,7 @@
 zip-based file with HTTP Range support, counts what it serves, and can mutate,
 corrupt or add path-traversal entries on demand.
 Usage: mock_updates.py PORT [--norange]"""
-import io, json, os, random, sys, urllib.parse, zipfile
+import email.utils, io, json, os, random, sys, urllib.parse, zipfile
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8780
@@ -22,6 +22,9 @@ EXEC = {"SGBA.sh", "sgba/python/bin/python3"}
 GAME = {"manifest.json": b'{"v":1}', "main.py": text("game", "v1"), "assets/blob.bin": os.urandom(400_000)}
 EXTRA = {}          # extra raw entries (e.g. path traversal)
 CORRUPT = set()     # entry names whose compressed bytes are damaged in the served copy
+VER = {"/bundle.zip": 0, "/game.sgba": 0}   # bumped on every change; becomes Last-Modified
+def stamp(path):
+    return email.utils.formatdate(1_790_000_000 + VER[path] * 3600, usegmt=True)
 STATS = {"requests": 0, "bytes": 0, "ranged": 0, "paths": [], "by": {}}
 
 def build(files, execs=()):
@@ -61,17 +64,19 @@ class H(BaseHTTPRequestHandler):
         if u.path == "/__reset":
             STATS.update(requests=0, bytes=0, ranged=0, paths=[], by={}); return self.reply(200, b"ok")
         if u.path == "/__set":      # change a bundle file
-            FILES[q["name"][0]] = q["text"][0].encode(); return self.reply(200, b"ok")
+            FILES[q["name"][0]] = q["text"][0].encode(); VER["/bundle.zip"] += 1; return self.reply(200, b"ok")
         if u.path == "/__add":
-            FILES[q["name"][0]] = q["text"][0].encode(); return self.reply(200, b"ok")
+            FILES[q["name"][0]] = q["text"][0].encode(); VER["/bundle.zip"] += 1; return self.reply(200, b"ok")
         if u.path == "/__game":
-            GAME["main.py"] = q["text"][0].encode(); return self.reply(200, b"ok")
+            GAME["main.py"] = q["text"][0].encode(); VER["/game.sgba"] += 1; return self.reply(200, b"ok")
+        if u.path == "/__touch":    # new modified time, identical content
+            VER[q["path"][0]] += 1; return self.reply(200, b"ok")
         if u.path == "/__corrupt":
-            CORRUPT.add(q["name"][0]); return self.reply(200, b"ok")
+            CORRUPT.add(q["name"][0]); VER["/bundle.zip"] += 1; return self.reply(200, b"ok")
         if u.path == "/__clean":
             CORRUPT.clear(); EXTRA.clear(); return self.reply(200, b"ok")
         if u.path == "/__evil":
-            EXTRA["../evil.txt"] = b"pwned"; return self.reply(200, b"ok")
+            EXTRA["../evil.txt"] = b"pwned"; VER["/bundle.zip"] += 1; return self.reply(200, b"ok")
         if u.path == "/bundle.zip": data = served_bundle()
         elif u.path == "/game.sgba": data = build(GAME)
         else: return self.reply(404, b"nope")
@@ -86,10 +91,10 @@ class H(BaseHTTPRequestHandler):
             part = data[a:b + 1]
             STATS["ranged"] += 1; STATS["bytes"] += len(part); STATS["paths"].append([u.path, a, b])
             STATS["by"][u.path] = STATS["by"].get(u.path, 0) + len(part)
-            return self.reply(206, part, {"Content-Range": f"bytes {a}-{b}/{len(data)}", "Accept-Ranges": "bytes"})
+            return self.reply(206, part, {"Content-Range": f"bytes {a}-{b}/{len(data)}", "Accept-Ranges": "bytes", "Last-Modified": stamp(u.path)})
         STATS["bytes"] += len(data); STATS["paths"].append([u.path, 0, len(data) - 1])
         STATS["by"][u.path] = STATS["by"].get(u.path, 0) + len(data)
-        return self.reply(200, data)
+        return self.reply(200, data, {"Last-Modified": stamp(u.path)})
     do_HEAD = do_GET
 
 if __name__ == "__main__":

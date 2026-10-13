@@ -1205,10 +1205,12 @@ static void si_stop(void) {
 #define MAXCOMP 6
 #define TAIL_BYTES 131072
 enum { CS_IDLE, CS_CHECKING, CS_OK, CS_UPDATE, CS_NEW, CS_ERROR, CS_UPDATING };
-enum { UPH_NONE, UPH_SIZE, UPH_TAIL, UPH_CD, UPH_CMP, UPH_FETCH, UPH_EXTRACT, UPH_FILEDL };
+enum { UPH_NONE, UPH_SIZE, UPH_TAIL, UPH_CD, UPH_CMP, UPH_FETCH, UPH_EXTRACT, UPH_FILEDL, UPH_STAMP };
 
 typedef struct {
-	char name[48], url[360], dest[240], keep[240];
+	char name[48], url[360], dest[240], keep[240], src[200];
+	char stamp[96], rec[96], pretty[40], sent[3][200];
+	int nsent;
 	int kind, self;          /* kind 0 = zip bundle, 1 = single file */
 	int status;
 	char msg[200];
@@ -1240,7 +1242,7 @@ static struct {
 	int flag[MAXCOMP], updated[MAXCOMP];
 } up;
 
-static void comp_add(const char *name, int kind, const char *url, const char *dest, const char *keep, int self) {
+static void comp_add(const char *name, int kind, const char *url, const char *dest, const char *keep, int self, const char *src) {
 	if (ncomp >= MAXCOMP) return;
 	Comp *c = &comp[ncomp++];
 	memset(c, 0, sizeof *c);
@@ -1249,6 +1251,7 @@ static void comp_add(const char *name, int kind, const char *url, const char *de
 	scpy(c->url, sizeof c->url, url);
 	scpy(c->dest, sizeof c->dest, dest);
 	scpy(c->keep, sizeof c->keep, keep);
+	scpy(c->src, sizeof c->src, src);
 	c->self = self;
 }
 
@@ -1260,7 +1263,62 @@ static void comp_runtime_free(Comp *c) {
 	c->need_c = c->need_u = 0;
 }
 
-/* components.conf lines:  name|zip or file|url|destination|keep list|self
+/* What was last verified as installed: name, the remote modified-time stamp at that
+ * moment, and up to three files that must still exist. A later check that sees the
+ * same stamp (and those files) skips the slow file-by-file comparison. */
+static char g_statepath[440];
+
+static void state_save(void) {
+	char tmp[460];
+	snprintf(tmp, sizeof tmp, "%s.tmp", g_statepath);
+	FILE *f = fopen(tmp, "wb");
+	if (!f) return;
+	for (int i = 0; i < ncomp; i++) {
+		if (!comp[i].rec[0]) continue;
+		fprintf(f, "%s\t%s", comp[i].name, comp[i].rec);
+		for (int k = 0; k < comp[i].nsent; k++) fprintf(f, "\t%s", comp[i].sent[k]);
+		fputc('\n', f);
+	}
+	fclose(f);
+	rename(tmp, g_statepath);
+}
+
+static void state_load(void) {
+	char *buf = read_file(g_statepath, 65536, NULL);
+	if (!buf) return;
+	for (char *line = strtok(buf, "\n"); line; line = strtok(NULL, "\n")) {
+		char *f[5] = {0};
+		int k = 0;
+		char *p = line;
+		while (k < 5) {
+			f[k++] = p;
+			char *t = strchr(p, '\t');
+			if (!t) break;
+			*t = 0;
+			p = t + 1;
+		}
+		if (k < 2) continue;
+		for (int i = 0; i < ncomp; i++)
+			if (!strcmp(comp[i].name, f[0])) {
+				scpy(comp[i].rec, sizeof comp[i].rec, f[1]);
+				comp[i].nsent = 0;
+				for (int j = 2; j < k && comp[i].nsent < 3; j++) scpy(comp[i].sent[comp[i].nsent++], sizeof comp[i].sent[0], f[j]);
+			}
+	}
+	free(buf);
+}
+
+/* Human text for a stamp: "13 Oct 05:18 UTC" (empty for ETag-style stamps). */
+static void stamp_pretty(const char *st, char *out, size_t n) {
+	static const char *mon[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+	int d, y, h, mi, mo;
+	char mname[8];
+	out[0] = 0;
+	if (sscanf(st, "%*3s, %d %3s %d %d:%d", &d, mname, &y, &h, &mi) == 5) snprintf(out, n, "%d %s %02d:%02d UTC", d, mname, h, mi);
+	else if (sscanf(st, "%d-%d-%dT%d:%d", &y, &mo, &d, &h, &mi) == 5 && mo >= 1 && mo <= 12) snprintf(out, n, "%d %s %02d:%02d UTC", d, mon[mo - 1], h, mi);
+}
+
+/* components.conf lines:  name|zip or file|url|destination|keep list|self|stamp source
  * destination is relative to the ports folder ("." = the ports folder itself;
  * for a single file it is the file's path). Files in the keep list (comma
  * separated, paths as inside the zip) are installed only if missing. */
@@ -1271,13 +1329,13 @@ static void comps_load(void) {
 	ncomp = 0;
 	if (buf) {
 		for (char *line = strtok(buf, "\n"); line; line = strtok(NULL, "\n")) {
-			char *f[6] = {0};
+			char *f[7] = {0};
 			int k = 0;
 			size_t l = strlen(line);
 			while (l && (line[l - 1] == '\r' || line[l - 1] == ' ')) line[--l] = 0;
 			if (!l || line[0] == '#') continue;
 			char *p = line;
-			while (k < 6) {
+			while (k < 7) {
 				f[k++] = p;
 				char *t = strchr(p, '|');
 				if (!t) break;
@@ -1285,19 +1343,20 @@ static void comps_load(void) {
 				p = t + 1;
 			}
 			if (k < 4 || !f[0][0] || !f[2][0]) continue;
-			comp_add(f[0], !strcmp(f[1], "file"), f[2], f[3], k > 4 ? f[4] : "", k > 5 && !strcmp(f[5], "self"));
+			comp_add(f[0], !strcmp(f[1], "file"), f[2], f[3], k > 4 ? f[4] : "", k > 5 && !strcmp(f[5], "self"), k > 6 ? f[6] : "");
 		}
 		free(buf);
 	}
 	if (!ncomp) {
 		comp_add("GitROMs", 0, "https://github.com/xenodorian/GitROMs/raw/main/dist/GitROMs.zip", ".",
-		         "gitroms/gitroms.conf,gitroms/components.conf", 1);
+		         "gitroms/gitroms.conf,gitroms/components.conf", 1, "commit:xenodorian/GitROMs:dist/GitROMs.zip");
 		comp_add("SGBA emulator", 0, "https://github.com/xenodorian/SGBA/releases/download/latest/SGBA-arkos-aarch64.zip", ".",
-		         "README.txt", 0);
+		         "README.txt", 0, "");
 		comp_add("Parry Perry (game)", 1, "https://github.com/xenodorian/BibooSGBA/releases/download/latest/parry-perry.sgba",
-		         "sgba/games/parry-perry.sgba", "", 0);
+		         "sgba/games/parry-perry.sgba", "", 0, "");
 	}
 	for (int i = 0; i < ncomp; i++) comp[i].status = CS_IDLE;
+	state_load();
 }
 
 static void comp_path(const Comp *c, const char *name, char *out, size_t n) {
@@ -1371,8 +1430,8 @@ static int up_job(const Comp *c, const char *outname, long long a, long long b, 
 
 static void up_cleanup_tmp(void) {
 	char p[480];
-	static const char *fixed[] = {"up.size", "up.hdr", "up.tail", "up.cd", "up.err"};
-	for (int i = 0; i < 5; i++) { up_tmp(p, sizeof p, fixed[i]); remove(p); }
+	static const char *fixed[] = {"up.size", "up.hdr", "up.tail", "up.cd", "up.err", "up.stamp"};
+	for (int i = 0; i < 6; i++) { up_tmp(p, sizeof p, fixed[i]); remove(p); }
 	for (int i = 0; i < 40; i++) { char n[24]; snprintf(n, sizeof n, "up.r%d", i); up_tmp(p, sizeof p, n); remove(p); }
 	free(up.tail);
 	up.tail = NULL;
@@ -1515,27 +1574,65 @@ static uint8_t *read_range(const char *path, long long off, size_t len) {
 	return b;
 }
 
+static void comp_record(Comp *c) {
+	if (!c->stamp[0]) return;
+	scpy(c->rec, sizeof c->rec, c->stamp);
+	c->nsent = 0;
+	if (c->kind == 0 && c->dir.n) {
+		int idx[3] = {0, c->dir.n / 2, c->dir.n - 1};
+		for (int k = 0; k < 3; k++) {
+			const char *nm = c->dir.e[idx[k]].name;
+			size_t nl = strlen(nm);
+			if (nl && nm[nl - 1] != '/' && !comp_keep(c, nm) && c->nsent < 3) scpy(c->sent[c->nsent++], sizeof c->sent[0], nm);
+		}
+	}
+	state_save();
+}
+
+static int up_fast_ok(Comp *c) {
+	char path[900];
+	if (!c->stamp[0] || strcmp(c->stamp, c->rec)) return 0;
+	if (c->kind == 1) { comp_path(c, "", path, sizeof path); return path_exists(path); }
+	if (!c->nsent) return 0;
+	for (int k = 0; k < c->nsent; k++) { comp_path(c, c->sent[k], path, sizeof path); if (!path_exists(path)) return 0; }
+	return 1;
+}
+
+static void up_mod_msg(Comp *c, const char *base, char *out, size_t n) {
+	if (c->pretty[0]) snprintf(out, n, "%s, modified %s", base, c->pretty);
+	else scpy(out, n, base);
+}
+
+/* The remote "last modified" stamp is known: decide, or go on to the file-by-file compare. */
+static void up_after_stamp(Comp *c) {
+	char m[200], h[32];
+	stamp_pretty(c->stamp, c->pretty, sizeof c->pretty);
+	human(h, sizeof h, c->total);
+	if (c->kind == 1) {
+		char path[900];
+		comp_path(c, "", path, sizeof path);
+		c->need_c = c->total;
+		if (!path_exists(path)) { snprintf(m, sizeof m, "Not installed (%s)", h); up_finish_comp(c, CS_NEW, m); return; }
+		if (up_fast_ok(c)) { up_mod_msg(c, "Up to date", m, sizeof m); up_finish_comp(c, CS_OK, m); return; }
+		snprintf(m, sizeof m, c->rec[0] ? "Changed on the server (%s)" : "New version (%s)", h);
+		up_mod_msg(c, m, c->msg, sizeof c->msg);
+		up_finish_comp(c, CS_UPDATE, c->msg);
+		return;
+	}
+	if (up_fast_ok(c)) { up_mod_msg(c, "Up to date", m, sizeof m); up_finish_comp(c, CS_OK, m); return; }
+	long long T = c->total < TAIL_BYTES ? c->total : TAIL_BYTES;
+	up.tail_start = c->total - T;
+	up.tail_file_off = c->rangeok ? 0 : up.tail_start;
+	if (!up_job(c, "up.tail", up.tail_start, c->rangeok ? c->total - 1 : -1, NULL, 0, c->rangeok ? 120 : 1800)) { up_fail(c, "Could not start curl."); return; }
+	up.phase = UPH_TAIL;
+}
+
 static void up_tail_ready(Comp *c) {
 	char tp[480];
 	up_tmp(tp, sizeof tp, "up.tail");
 	size_t len = (size_t)(c->total - up.tail_start);
 	up.tail = read_range(tp, up.tail_file_off, len);
 	if (!up.tail) { up_fail(c, "The download was incomplete."); return; }
-	if (c->kind == 1) {
-		char path[900];
-		comp_path(c, "", path, sizeof path);
-		c->need_c = c->total;
-		char h[32];
-		human(h, sizeof h, c->total);
-		if (!path_exists(path)) { snprintf(c->msg, sizeof c->msg, "Not installed (%s)", h); up_finish_comp(c, CS_NEW, c->msg); return; }
-		if (file_size(path) != c->total) { snprintf(c->msg, sizeof c->msg, "New version (%s)", h); up_finish_comp(c, CS_UPDATE, c->msg); return; }
-		uint8_t *loc = read_range(path, up.tail_start, len);
-		int same = loc && !memcmp(loc, up.tail, len);
-		free(loc);
-		if (same) up_finish_comp(c, CS_OK, "Up to date");
-		else { snprintf(c->msg, sizeof c->msg, "New version (%s)", h); up_finish_comp(c, CS_UPDATE, c->msg); }
-		return;
-	}
 	if (zx_find_eocd(up.tail, len, &up.cd_off, &up.cd_size, &up.cd_count)) { up_fail(c, "Not a valid zip file."); return; }
 	if ((long long)up.cd_off >= up.tail_start && (long long)up.cd_off + up.cd_size <= c->total) {
 		up_cd_ready(c, up.tail + (up.cd_off - up.tail_start));
@@ -1571,9 +1668,9 @@ static void up_cmp_step(Comp *c) {
 	}
 	char h[32];
 	human(h, sizeof h, c->need_c);
-	if (!c->nneed) { snprintf(c->msg, sizeof c->msg, "Up to date (%d files)", c->dir.n); up_finish_comp(c, CS_OK, c->msg); }
+	if (!c->nneed) { comp_record(c); char b[100]; snprintf(b, sizeof b, "Up to date (%d files)", c->dir.n); up_mod_msg(c, b, c->msg, sizeof c->msg); up_finish_comp(c, CS_OK, c->msg); }
 	else if (!c->nlocal) { snprintf(c->msg, sizeof c->msg, "Not installed: %d files, %s", c->nneed, h); up_finish_comp(c, CS_NEW, c->msg); }
-	else { snprintf(c->msg, sizeof c->msg, "%d of %d files changed, %s", c->nneed, c->dir.n, h); up_finish_comp(c, CS_UPDATE, c->msg); }
+	else { char b[100]; snprintf(b, sizeof b, "%d of %d files changed, %s", c->nneed, c->dir.n, h); up_mod_msg(c, b, c->msg, sizeof c->msg); up_finish_comp(c, CS_UPDATE, c->msg); }
 	/* keep dir/need for the update step */
 }
 
@@ -1644,6 +1741,7 @@ static void up_extract_step(Comp *c) {
 	snprintf(m, sizeof m, "Updated %d files", c->nneed);
 	up.updated[up.ci] = 1;
 	if (c->self) up.restart_needed = 1;
+	comp_record(c);
 	comp_runtime_free(c);
 	up_finish_comp(c, CS_OK, m);
 }
@@ -1682,6 +1780,7 @@ static void up_step(uint32_t now) {
 		chmod(part, 0644);
 		if (rename(part, path) != 0) { remove(part); up_fail(c, "Could not replace the file."); return; }
 		up.updated[up.ci] = 1;
+		comp_record(c);
 		up_finish_comp(c, CS_OK, "Updated");
 		return;
 	}
@@ -1695,11 +1794,38 @@ static void up_step(uint32_t now) {
 		if (tot <= 0) { up_fail(c, "Could not read the file size."); return; }
 		c->total = tot;
 		c->rangeok = ro;
-		long long T = tot < TAIL_BYTES ? tot : TAIL_BYTES;
-		up.tail_start = tot - T;
-		up.tail_file_off = ro ? 0 : up.tail_start;
-		if (!up_job(c, "up.tail", up.tail_start, ro ? tot - 1 : -1, NULL, 0, ro ? 120 : 1800)) { up_fail(c, "Could not start curl."); return; }
-		up.phase = UPH_TAIL;
+		char v[200];
+		c->stamp[0] = 0;
+		if (hdr_find(p, "last-modified:", v, sizeof v)) scpy(c->stamp, sizeof c->stamp, v);
+		else if (hdr_find(p, "etag:", v, sizeof v)) snprintf(c->stamp, sizeof c->stamp, "etag %s", v);
+		if (!strncmp(c->src, "commit:", 7)) {
+			char repo[120], path[120], url[400], out[480], err[480];
+			if (sscanf(c->src + 7, "%119[^:]:%119s", repo, path) == 2) {
+				snprintf(url, sizeof url, "%s/repos/%s/commits?path=%s&per_page=1", g_api, repo, path);
+				up_tmp(out, sizeof out, "up.stamp");
+				up_tmp(err, sizeof err, "up.err");
+				remove(out);
+				if (job_start_ex(&up.job, url, out, err, 30, 1, NULL, NULL, 65536)) { up.phase = UPH_STAMP; return; }
+			}
+		}
+		up_after_stamp(c);
+		return;
+	}
+	case UPH_STAMP: {
+		if (!job_poll(&up.job)) return;
+		if (up.job.rc == 0) {                       /* on any failure keep the ETag stamp */
+			up_tmp(p, sizeof p, "up.stamp");
+			size_t n;
+			char *body = read_file(p, 65536, &n);
+			J *root = body ? json_parse(body, n) : NULL;
+			J *first = (root && root->t == 4) ? root->kids : NULL;
+			J *cm = jget(first, "commit"), *cr = jget(cm, "committer");
+			const char *d = jstr(cr, "date");
+			if (d) snprintf(c->stamp, sizeof c->stamp, "%s", d);
+			j_free(root);
+			free(body);
+		}
+		up_after_stamp(c);
 		return;
 	}
 	case UPH_TAIL:
@@ -2424,6 +2550,7 @@ int main(void) {
 		for (int up_dirs = 0; up_dirs < 2; up_dirs++) { char *sl = strrchr(g_ports, '/'); if (sl) *sl = 0; }
 	}
 	snprintf(g_instpath, sizeof g_instpath, "%s/installed.txt", g_home);
+	snprintf(g_statepath, sizeof g_statepath, "%s/updates.txt", g_home);
 	inst_load();
 
 	SDL_SetHint("SDL_HINT_RENDER_SCALE_QUALITY", "0");

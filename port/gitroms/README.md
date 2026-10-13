@@ -57,14 +57,19 @@ the old ones in the right folders (`ports/` for GitROMs and SGBA,
 `ports/sgba/games/` for games). Then it checks again to confirm. If GitROMs
 itself was updated it says so; close and reopen it.
 
-How "only what changed" works: for a zip bundle GitROMs reads just the list of
+Updates are decided by when the file was last modified on GitHub, never by size.
+GitROMs records that modified time when it installs something (in
+`gitroms/data/updates.txt`). If the time on GitHub is the same, the item is
+"Up to date" and nothing is downloaded. If it is newer, the item is offered.
+
+How "only what changed" works: for a zip bundle with a newer modified time, GitROMs
+reads just the list of
 files inside, compares each file on your card (size and checksum), and fetches
 only the differing files with byte-range requests. Every file is checked against
 its checksum before it replaces the old one, so a bad download never overwrites
 a good file. Your own `gitroms.conf` and `components.conf` are never overwritten.
 It needs no accounts and uses none of GitHub's limited API requests. A single
-file (a game) is compared by its size and its last 128 KB, so use `.sgba` or
-`.zip` files for games.
+file (a game) is simply re-downloaded when its modified time changes.
 
 To add another game or bundle, add a line to `gitroms/components.conf`
 (the file explains the format).
