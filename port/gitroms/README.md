@@ -21,25 +21,26 @@ tokens, no extra runtime to install.
 
 ## Controls
 
-- D-pad up/down: move. Left/right or L1/R1: page.
-- A: open folder / pick file / confirm. B: back / cancel.
-- Select: refresh the list. Start: downloads history.
-- X: system info screen (kernel, USB devices, Wi-Fi support, firmware). It also
-  saves `gitroms/data/SystemInfo.txt`. Read-only; changes nothing.
-- On the save screen, left/right changes the destination system folder.
+Only four buttons are needed: **D-pad up/down, A and B**.
 
-Files go to `<roms>/<system>/`. Existing files are never overwritten (you can
-save a numbered copy). Downloads write to a `.gitroms-part` file and are
-renamed only when complete. Folder lists are cached for the session, so going
-back does not use up GitHub's 60-requests-per-hour anonymous limit.
+- D-pad up/down: move. A: open / pick / confirm. B: back or cancel (on the
+  first list it opens "Quit?", and A quits).
+- Optional: D-pad left/right or L1/R1 page 12 rows (on the save screen, left/right
+  change the system folder). Select (or Y) refreshes the list. Start shows the
+  downloads history. X opens the system info screen.
 
-The left stick is not mapped on purpose: a worn stick near its centre sends
-rapid false presses. To use it for the list, add `left_analog_up = up` (and
-down/left/right) to `gitroms/gitroms.gptk`.
+Input comes from one place. Under PortMaster, `gptokeyb` turns the pad into keys
+(`gitroms.gptk`) and GitROMs ignores raw joystick events, so a press is never
+counted twice. If `gptokeyb` is not running, GitROMs reads the raw joystick
+buttons itself, using the R36S numbers from BibooSGBA's `controls-arkos.json`
+(d-pad = buttons 8-11, B = 0, A = 1, X = 2, Y = 3, L1/R1 = 4/5, Select/Start =
+12/13). Change any of them in `gitroms.conf` (`pad_a=0` and so on). The log
+`gitroms/data/gitroms.log` records which mode and numbers are in use.
 
-Input is merged: the pad arrives both as a key (gptokeyb) and as an SDL button,
-and the OS auto-repeats held keys. GitROMs treats these as one press and
-repeats a held up/down itself at a steady speed.
+Holding up/down repeats at a steady speed; the OS key-repeat is ignored. The left
+stick is not mapped on purpose: a worn stick near its centre sends rapid false
+presses. To use it, add `left_analog_up = up` (and down/left/right) to
+`gitroms/gitroms.gptk`.
 
 ## Updating files
 

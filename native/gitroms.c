@@ -32,7 +32,6 @@ typedef struct { uint32_t type; uint8_t pad[60]; } __attribute__((aligned(8))) S
 
 #define SDL_INIT_VIDEO 0x00000020u
 #define SDL_INIT_JOYSTICK 0x00000200u
-#define SDL_INIT_GAMECONTROLLER 0x00002000u
 #define SDL_INIT_EVENTS 0x00004000u
 #define SDL_WINDOW_FULLSCREEN 0x00000001u
 #define SDL_WINDOW_SHOWN 0x00000004u
@@ -44,9 +43,10 @@ typedef struct { uint32_t type; uint8_t pad[60]; } __attribute__((aligned(8))) S
 #define SDL_QUIT 0x100
 #define SDL_KEYDOWN 0x300
 #define SDL_KEYUP 0x301
-#define SDL_CONTROLLERBUTTONDOWN 0x650
-#define SDL_CONTROLLERBUTTONUP 0x651
-#define SDL_CONTROLLERDEVICEADDED 0x653
+#define SDL_JOYHATMOTION 0x602
+#define SDL_JOYBUTTONDOWN 0x603
+#define SDL_JOYBUTTONUP 0x604
+#define SDL_JOYDEVICEADDED 0x605
 
 int SDL_Init(uint32_t);
 void SDL_Quit(void);
@@ -69,8 +69,8 @@ uint32_t SDL_GetTicks(void);
 void SDL_Delay(uint32_t);
 const char *SDL_GetCurrentVideoDriver(void);
 int SDL_NumJoysticks(void);
-int SDL_IsGameController(int);
-void *SDL_GameControllerOpen(int);
+void *SDL_JoystickOpen(int);
+int SDL_PushEvent(SDL_Event *);
 
 /* ------------------------------------------------------------ constants */
 #define VW 640
@@ -78,7 +78,7 @@ void *SDL_GameControllerOpen(int);
 #define MAXITEMS 1500
 #define ROWS 12
 #define ROWH 30
-#define VERSION "3.3"
+#define VERSION "3.4"
 
 static uint32_t fb[VW * VH];
 
@@ -1349,13 +1349,20 @@ static int key_action(int sc) {
 	}
 	return A_NONE;
 }
-static int pad_action(int b) {
-	switch (b) {
-	case 0: return A_OK; case 1: return A_BACK; case 6: return A_START;
-	case 2: return A_INFO; case 4: case 3: return A_SELECT; case 9: return A_PGUP; case 10: return A_PGDN;
-	case 11: return A_UP; case 12: return A_DOWN; case 13: return A_LEFT; case 14: return A_RIGHT;
-	}
-	return A_NONE;
+/* Raw joystick buttons. The defaults are the R36S layout recorded in
+ * BibooSGBA's sgba/controls-arkos.json (d-pad = buttons 8-11, A = 1, B = 0).
+ * Override any of them in gitroms.conf, e.g. "pad_a=0". The SDL "controller"
+ * layer is not used: its mapping can disagree with the device's own. */
+static const char *ROLE_NAME[] = {"up", "down", "left", "right", "a", "b", "x", "y", "l1", "r1", "select", "start"};
+static const int ROLE_ACT[] = {A_UP, A_DOWN, A_LEFT, A_RIGHT, A_OK, A_BACK, A_INFO, A_SELECT, A_PGUP, A_PGDN, A_SELECT, A_START};
+static int role_btn[12] = {8, 9, 10, 11, 1, 0, 2, 3, 4, 5, 12, 13};
+static int btn_act[32];
+static int g_keys_only;   /* gptokeyb is delivering the pad as keys: ignore raw joystick events */
+
+static void build_btn_map(void) {
+	memset(btn_act, 0, sizeof btn_act);
+	for (int r = 0; r < 12; r++)
+		if (role_btn[r] >= 0 && role_btn[r] < 32) btn_act[role_btn[r]] = ROLE_ACT[r];
 }
 
 /* ------------------------------------------------------------- drawing */
@@ -1678,6 +1685,28 @@ static void test_step(uint32_t now) {
 	else if (!strncmp(st, "pd=", 3)) input_press(act_from_name(st + 3), SRC_PAD, now);
 	else if (!strncmp(st, "pu=", 3)) input_release(act_from_name(st + 3), SRC_PAD);
 	else if (!strcmp(st, "logsel")) logf_("sel=%d", have_cur ? cur.sel : -1);
+	else if (!strcmp(st, "logscr")) logf_("scr=%d sp=%d", screen, sp);
+	else if (!strncmp(st, "jb=", 3) || !strncmp(st, "ju=", 3)) { /* raw joystick button down / up */
+		SDL_Event e;
+		memset(&e, 0, sizeof e);
+		e.type = st[1] == 'b' ? SDL_JOYBUTTONDOWN : SDL_JOYBUTTONUP;
+		((uint8_t *)&e)[12] = (uint8_t)atoi(st + 3);
+		((uint8_t *)&e)[13] = st[1] == 'b';
+		SDL_PushEvent(&e);
+	} else if (!strncmp(st, "hat=", 4)) {
+		SDL_Event e;
+		memset(&e, 0, sizeof e);
+		e.type = SDL_JOYHATMOTION;
+		((uint8_t *)&e)[13] = (uint8_t)atoi(st + 4);
+		SDL_PushEvent(&e);
+	} else if (!strncmp(st, "key=", 4) || !strncmp(st, "keyu=", 5)) { /* keyboard scancode down / up */
+		SDL_Event e;
+		int32_t sc = atoi(strchr(st, '=') + 1);
+		memset(&e, 0, sizeof e);
+		e.type = st[3] == '=' ? SDL_KEYDOWN : SDL_KEYUP;
+		memcpy((uint8_t *)&e + 16, &sc, 4);
+		SDL_PushEvent(&e);
+	}
 }
 
 /* ----------------------------------------------------------------- main */
@@ -1695,6 +1724,8 @@ static void load_conf(const char *path) {
 		while (l && (v[l - 1] == '\r' || v[l - 1] == ' ')) v[--l] = 0;
 		if (!strcmp(line, "user") && v[0]) scpy(g_user, sizeof g_user, v);
 		else if (!strcmp(line, "api") && v[0]) scpy(g_api, sizeof g_api, v);
+		else if (!strncmp(line, "pad_", 4) && v[0])
+			for (int r = 0; r < 12; r++) if (!strcmp(line + 4, ROLE_NAME[r])) role_btn[r] = atoi(v);
 	}
 	free(s);
 }
@@ -1729,8 +1760,8 @@ int main(void) {
 	inst_load();
 
 	SDL_SetHint("SDL_HINT_RENDER_SCALE_QUALITY", "0");
-	if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_GAMECONTROLLER | SDL_INIT_JOYSTICK) != 0) {
-		logf_("SDL_Init (with controllers) failed: %s", SDL_GetError());
+	if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_JOYSTICK) != 0) {
+		logf_("SDL_Init (with joystick) failed: %s", SDL_GetError());
 		if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) != 0) {
 			logf_("SDL_Init failed: %s", SDL_GetError());
 			fprintf(stderr, "GitROMs: SDL_Init failed: %s\n", SDL_GetError());
@@ -1767,8 +1798,12 @@ int main(void) {
 		const char *drv = SDL_GetCurrentVideoDriver();
 		logf_("video driver: %s", drv ? drv : "?");
 	}
-	for (int i = 0, n = SDL_NumJoysticks(); i < n; i++)
-		if (SDL_IsGameController(i)) SDL_GameControllerOpen(i);
+	g_keys_only = (e = getenv("GITROMS_INPUT")) && !strcmp(e, "keys");
+	build_btn_map();
+	logf_("input: %s; buttons up%d down%d left%d right%d a%d b%d x%d y%d l1_%d r1_%d select%d start%d", g_keys_only ? "keys from gptokeyb (pad ignored)" : "raw joystick + keys",
+	      role_btn[0], role_btn[1], role_btn[2], role_btn[3], role_btn[4], role_btn[5], role_btn[6], role_btn[7], role_btn[8], role_btn[9], role_btn[10], role_btn[11]);
+	if (!g_keys_only)
+		for (int i = 0, n = SDL_NumJoysticks(); i < n; i++) SDL_JoystickOpen(i);
 
 	if ((e = getenv("GITROMS_TEST"))) test_init(e);
 
@@ -1789,14 +1824,25 @@ int main(void) {
 				int a = key_action((int)scan);
 				if (ev.type == SDL_KEYUP) input_release(a, SRC_KEY);
 				else if (!((uint8_t *)&ev)[13]) input_press(a, SRC_KEY, t0);   /* ignore OS auto-repeat */
-			} else if (ev.type == SDL_CONTROLLERBUTTONDOWN) {
-				input_press(pad_action(((uint8_t *)&ev)[12]), SRC_PAD, t0);
-			} else if (ev.type == SDL_CONTROLLERBUTTONUP) {
-				input_release(pad_action(((uint8_t *)&ev)[12]), SRC_PAD);
-			} else if (ev.type == SDL_CONTROLLERDEVICEADDED) {
+			} else if (ev.type == SDL_JOYBUTTONDOWN || ev.type == SDL_JOYBUTTONUP) {
+				int b = ((uint8_t *)&ev)[12], a = (b >= 0 && b < 32) ? btn_act[b] : A_NONE;
+				if (g_keys_only) continue;
+				if (ev.type == SDL_JOYBUTTONDOWN) input_press(a, SRC_PAD, t0);
+				else input_release(a, SRC_PAD);
+			} else if (ev.type == SDL_JOYHATMOTION) {
+				static int hat_prev;
+				int v = ((uint8_t *)&ev)[13];
+				static const int bit[4] = {1, 2, 4, 8}, hact[4] = {A_UP, A_RIGHT, A_DOWN, A_LEFT};
+				if (g_keys_only) continue;
+				for (int i = 0; i < 4; i++) {
+					if ((v & bit[i]) && !(hat_prev & bit[i])) input_press(hact[i], SRC_PAD, t0);
+					if (!(v & bit[i]) && (hat_prev & bit[i])) input_release(hact[i], SRC_PAD);
+				}
+				hat_prev = v;
+			} else if (ev.type == SDL_JOYDEVICEADDED) {
 				int32_t which;
 				memcpy(&which, (uint8_t *)&ev + 8, 4);
-				SDL_GameControllerOpen(which);
+				if (!g_keys_only) SDL_JoystickOpen(which);
 			}
 		}
 		input_tick(t0);

@@ -83,8 +83,21 @@ if [ ! -x "$BIN" ]; then
 fi
 echo "binary: $BIN"
 
+# Input comes from ONE place. If gptokeyb starts, the pad arrives as keys and
+# GitROMs ignores raw joystick events (they would double every press). If it
+# does not start, GitROMs reads the raw joystick buttons itself.
 if [ -n "$GPTOKEYB" ]; then
   $GPTOKEYB "$(basename "$BIN")" -c "$GAMEDIR/gitroms.gptk" &
+  GPT_PID=$!
+  sleep 0.5
+  if kill -0 "$GPT_PID" 2>/dev/null; then
+    export GITROMS_INPUT=keys
+    echo "input: gptokeyb running (pid $GPT_PID), using keys"
+  else
+    echo "input: gptokeyb did not start, using raw joystick buttons"
+  fi
+else
+  echo "input: no gptokeyb, using raw joystick buttons"
 fi
 type pm_platform_helper >/dev/null 2>&1 && pm_platform_helper "$BIN" >/dev/null 2>&1
 
