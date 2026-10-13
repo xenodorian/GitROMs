@@ -86,3 +86,9 @@ so the result needs only GLIBC_2.17 (aarch64) or GLIBC_2.4 (armhf).
 - Interrupting an update leaves a mix of old and new files; the next check fixes it.
 - Not verified on the device: speed of the CRC pass over a 93 MB bundle on the
   R36S, and Wi-Fi behaviour during a 30 MB first install.
+
+## Games are their own packages (2026-10-13)
+- The SGBA emulator package holds no real games (only its demo, input lab and controller setup). Each game is a package of its own: a launcher plus its own folder. Parry Perry is `parry-perry-port.zip` from the BibooSGBA `latest` release (`Parry Perry.sh` + `parry-perry/`), run on the separately installed emulator.
+- The only Parry Perry URL GitROMs uses is `.../BibooSGBA/releases/download/latest/parry-perry-port.zip`. The release still carries redundant leftovers (`parry-perry.sgba`, `parry-perry-arkos-aarch64.zip`, `parry-perry-native-arkos-aarch64.zip`). They are never downloaded or listed by GitROMs, and the built-in list treats the old `.sgba` URL as obsolete: a card's old components.conf line for it is dropped on load.
+- After a verified install, GitROMs removes the old copies listed in a component's last field (files or folders under the ports folder; `sgba/games/parry-perry.sgba` and `sgba/games/parry-perry` here).
+- Cause of the original "device has an old build" report: the updater wrote `sgba/games/parry-perry.sgba`, but the old standalone port ran the loose folder `sgba/games/parry-perry/`. Two install paths existed.
