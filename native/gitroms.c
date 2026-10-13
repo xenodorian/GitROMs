@@ -2297,7 +2297,7 @@ static void draw_screen(uint32_t now) {
 }
 
 /* ----------------------------------------------------------- test driver */
-static char *tsteps[64];
+static char *tsteps[256];
 static int ntsteps, tstep, test_mode;
 static uint32_t twait_until;
 static char *tshot;
@@ -2320,9 +2320,9 @@ static void write_ppm(const char *path) {
 }
 
 static void test_init(const char *spec) {
-	static char copy[4096];
+	static char copy[16384];
 	scpy(copy, sizeof copy, spec);
-	for (char *s = strtok(copy, ";"); s && ntsteps < 64; s = strtok(NULL, ";")) tsteps[ntsteps++] = s;
+	for (char *s = strtok(copy, ";"); s && ntsteps < 256; s = strtok(NULL, ";")) tsteps[ntsteps++] = s;
 	test_mode = 1;
 }
 
