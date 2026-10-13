@@ -1362,7 +1362,11 @@ static void comps_load(void) {
 	};
 	for (size_t d = 0; d < sizeof def / sizeof def[0] && !getenv("GITROMS_NODEFAULTS"); d++) {
 		int have = 0;
-		for (int i = 0; i < ncomp; i++) if (!strcmp(comp[i].url, def[d].url)) have = 1;
+		for (int i = 0; i < ncomp; i++)
+			if (!strcmp(comp[i].url, def[d].url)) {
+				have = 1;
+				if (!comp[i].src[0]) scpy(comp[i].src, sizeof comp[i].src, def[d].src);   /* older line without a date source */
+			}
 		if (!have) comp_add(def[d].name, def[d].kind, def[d].url, def[d].dest, def[d].keep, def[d].self, def[d].src);
 	}
 	for (int i = 0; i < ncomp; i++) comp[i].status = CS_IDLE;
