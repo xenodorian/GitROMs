@@ -1374,11 +1374,12 @@ static void comps_load(void) {
 		 "gitroms/gitroms.conf,gitroms/components.conf", "commit:xenodorian/GitROMs:dist/GitROMs.zip", "", 0, 1},
 		{"SGBA emulator", "https://github.com/xenodorian/SGBA/releases/download/latest/SGBA-arkos-aarch64.zip", ".",
 		 "README.txt", "", "", 0, 0},
-		/* A game lives in its own package: "Parry Perry.sh" plus its own folder, run on the SGBA
-		 * emulator above, which holds no real games. The earlier single-file and folder copies
-		 * inside the emulator's games folder are removed after a verified install. */
+		/* A game lives in its own package: "Parry Perry.sh" plus the one compiled .sgba in its own
+		 * folder (parry-perry-game/), run on the SGBA emulator above, which holds no real games.
+		 * Earlier copies are removed after a verified install: the file and folder inside the
+		 * emulator's games folder, and the loose unpacked project in parry-perry/. */
 		{"Parry Perry (game)", "https://github.com/xenodorian/BibooSGBA/releases/download/latest/parry-perry-port.zip",
-		 ".", "", "", "sgba/games/parry-perry.sgba,sgba/games/parry-perry", 0, 0},
+		 ".", "", "", "sgba/games/parry-perry.sgba,sgba/games/parry-perry,parry-perry", 0, 0},
 		{"Pokemon War and Murder", "https://github.com/xenodorian/Pokemon-War-and-Murder/raw/main/roms/Pokemon%20War%20and%20Murder.gba",
 		 "../gba/Pokemon War and Murder.gba", "", "commit:xenodorian/Pokemon-War-and-Murder:roms/Pokemon%20War%20and%20Murder.gba", "", 1, 0},
 	};
