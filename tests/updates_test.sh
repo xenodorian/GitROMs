@@ -14,7 +14,7 @@ MOCK=$!
 trap 'kill $MOCK $MOCK2 2>/dev/null; rm -rf "${T:?}"' EXIT
 MOCK2=""
 sleep 1
-export NO_PROXY=127.0.0.1 no_proxy=127.0.0.1 GITROMS_API=http://127.0.0.1:1 GITROMS_WINDOWED=1 SDL_VIDEODRIVER=dummy
+export NO_PROXY=127.0.0.1 no_proxy=127.0.0.1 GITROMS_NODEFAULTS=1 GITROMS_API=http://127.0.0.1:1 GITROMS_WINDOWED=1 SDL_VIDEODRIVER=dummy
 PORTS="$T/ports"; mkdir -p "$PORTS/gitroms/data" "$T/roms"
 cat > "$T/components.conf" <<CONF
 Bundle|zip|http://127.0.0.1:$PORT/bundle.zip|.|README.txt,gitroms/gitroms.conf|self

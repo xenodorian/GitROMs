@@ -1347,13 +1347,23 @@ static void comps_load(void) {
 		}
 		free(buf);
 	}
-	if (!ncomp) {
-		comp_add("GitROMs", 0, "https://github.com/xenodorian/GitROMs/raw/main/dist/GitROMs.zip", ".",
-		         "gitroms/gitroms.conf,gitroms/components.conf", 1, "commit:xenodorian/GitROMs:dist/GitROMs.zip");
-		comp_add("SGBA emulator", 0, "https://github.com/xenodorian/SGBA/releases/download/latest/SGBA-arkos-aarch64.zip", ".",
-		         "README.txt", 0, "");
-		comp_add("Parry Perry (game)", 1, "https://github.com/xenodorian/BibooSGBA/releases/download/latest/parry-perry.sgba",
-		         "sgba/games/parry-perry.sgba", "", 0, "");
+	/* Built-in entries are added when no line of components.conf uses the same URL, so a
+	 * card with an older components.conf still gets new ones (an unwanted one can be
+	 * hidden by pointing a line at the same URL and giving it another name). */
+	static const struct { const char *name, *url, *dest, *keep, *src; int kind, self; } def[] = {
+		{"GitROMs", "https://github.com/xenodorian/GitROMs/raw/main/dist/GitROMs.zip", ".",
+		 "gitroms/gitroms.conf,gitroms/components.conf", "commit:xenodorian/GitROMs:dist/GitROMs.zip", 0, 1},
+		{"SGBA emulator", "https://github.com/xenodorian/SGBA/releases/download/latest/SGBA-arkos-aarch64.zip", ".",
+		 "README.txt", "", 0, 0},
+		{"Parry Perry (game)", "https://github.com/xenodorian/BibooSGBA/releases/download/latest/parry-perry.sgba",
+		 "sgba/games/parry-perry.sgba", "", "", 1, 0},
+		{"Pokemon Outlaw Mod", "https://github.com/xenodorian/Pokemon-Outlaw-Mod/raw/main/roms/Pokemon%20War%20and%20Murder.gba",
+		 "../gba/Pokemon Outlaw Mod.gba", "", "commit:xenodorian/Pokemon-Outlaw-Mod:roms/Pokemon%20War%20and%20Murder.gba", 1, 0},
+	};
+	for (size_t d = 0; d < sizeof def / sizeof def[0] && !getenv("GITROMS_NODEFAULTS"); d++) {
+		int have = 0;
+		for (int i = 0; i < ncomp; i++) if (!strcmp(comp[i].url, def[d].url)) have = 1;
+		if (!have) comp_add(def[d].name, def[d].kind, def[d].url, def[d].dest, def[d].keep, def[d].self, def[d].src);
 	}
 	for (int i = 0; i < ncomp; i++) comp[i].status = CS_IDLE;
 	state_load();
