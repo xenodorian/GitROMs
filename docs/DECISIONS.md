@@ -75,9 +75,10 @@ so the result needs only GLIBC_2.17 (aarch64) or GLIBC_2.4 (armhf).
   sends only an ETag, so the GitROMs component uses `commit:owner/repo:path`, which
   reads the latest commit date from the commits API (falls back to the ETag if the
   API is unreachable). The stamp is saved in `gitroms/data/updates.txt` with up to
-  three sentinel files. Same stamp and sentinels present: "Up to date" with no
-  download beyond the 1 byte probe. Different or unrecorded stamp: the CRC compare
-  picks the files to fetch (zip), or the file is re-downloaded (single file). A
+  three sentinel files. Single files: same stamp means up to date, a different one means re-download.
+  Zip bundles: the stamp is display only; every check reads the file list and
+  compares every file (size, CRC32), because a stamp-only shortcut missed changes
+  (user: bundles must scan all relevant files). A
   touched but unchanged bundle reports up to date and records the new stamp.
 - Caveat: a file deleted by hand that is not a sentinel is not noticed until the
   stamp changes. Clock accuracy on the device is irrelevant, only server values

@@ -62,7 +62,7 @@ srv /__reset
 app "$OPEN;logupd"
 chk "second check: bundle up to date" "st 0 | grep -q 'st=2'"
 chk "second check: game up to date" "st 1 | grep -q 'st=2'"
-B=$(stat_ bundle.zip); chk "second check trusted the modified time and read $B bytes" "[ $B -lt 100 ]"
+B=$(stat_ bundle.zip); chk "second check read the file list but no file contents ($B bytes)" "[ $B -lt 300000 ]"
 chk "up to date message shows the modified date" "st 0 | grep -q 'modified .* UTC'"
 chk "modified times were recorded in updates.txt" "grep -q '^Bundle	' \"$PORTS/gitroms/data/updates.txt\" && grep -q '^Game	' \"$PORTS/gitroms/data/updates.txt\""
 
@@ -76,15 +76,15 @@ app "$OPEN;act=confirm;idle;logupd"
 app "$OPEN;logupd"
 chk "after the game refresh both are up to date again" "st 0 | grep -q 'st=2' && st 1 | grep -q 'st=2'"
 
-# 2c. a file from the bundle was deleted by hand: the check notices
+# 2c. files changed or deleted by hand with the stamp unchanged: every bundle file is still scanned
 rm -f "$PORTS/sgba/lib/mod119.py" "$PORTS/sgba/lib/mod000.py" "$PORTS/sgba/data/conf.json"
+python3 - <<PY
+p="$PORTS/sgba/lib/mod050.py"; d=bytearray(open(p,'rb').read()); d[40]^=1; open(p,'wb').write(d)   # same size, one byte different
+PY
 app "$OPEN;logupd"
-chk "missing files are noticed even when the stamp matches" "st 0 | grep -q 'st=2' || st 0 | grep -q 'st=3'"
-srv "/__touch?path=/bundle.zip"
-app "$OPEN;logupd"
-chk "after a new modified time the missing files show up" "st 0 | grep -q 'st=3'"
+chk "hand-changed and missing files are found without a new modified time (4 files)" "st 0 | grep -q 'st=3 nneed=4'"
 app "$OPEN;act=confirm;idle;logupd"
-chk "missing files restored" "[ -f \"$PORTS/sgba/lib/mod119.py\" ] && [ -f \"$PORTS/sgba/lib/mod000.py\" ] && [ -f \"$PORTS/sgba/data/conf.json\" ]"
+chk "all four files restored" "st 0 | grep -q 'st=2' && [ -f \"$PORTS/sgba/lib/mod119.py\" ] && [ -f \"$PORTS/sgba/lib/mod000.py\" ] && [ -f \"$PORTS/sgba/data/conf.json\" ] && grep -q 'line 0' \"$PORTS/sgba/lib/mod050.py\"" 
 
 # 3. upstream changes 2 files, adds 1; local README was edited (kept), conf is kept
 echo "my local readme" > "$PORTS/README.txt"

@@ -1633,7 +1633,7 @@ static void up_after_stamp(Comp *c) {
 		up_finish_comp(c, CS_UPDATE, c->msg);
 		return;
 	}
-	if (up_fast_ok(c)) { up_mod_msg(c, "Up to date", m, sizeof m); up_finish_comp(c, CS_OK, m); return; }
+	/* A bundle is never judged by its stamp alone: every file is compared (size, CRC32). */
 	long long T = c->total < TAIL_BYTES ? c->total : TAIL_BYTES;
 	up.tail_start = c->total - T;
 	up.tail_file_off = c->rangeok ? 0 : up.tail_start;

@@ -59,10 +59,12 @@ itself was updated it says so; close and reopen it.
 
 Updates are decided by when the file was last modified on GitHub, never by size.
 GitROMs records that modified time when it installs something (in
-`gitroms/data/updates.txt`). If the time on GitHub is the same, the item is
-"Up to date" and nothing is downloaded. If it is newer, the item is offered.
+`gitroms/data/updates.txt`). For a single
+file (a game or ROM) the same time means "Up to date" with no download; a newer
+time offers it. A bundle (GitROMs, SGBA) is different: every check scans every
+file in it, so a changed, edited or missing file is always found.
 
-How "only what changed" works: for a zip bundle with a newer modified time, GitROMs
+How "only what changed" works: for a zip bundle GitROMs
 reads just the list of
 files inside, compares each file on your card (size and checksum), and fetches
 only the differing files with byte-range requests. Every file is checked against
