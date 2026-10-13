@@ -150,6 +150,24 @@ static int is_dir(const char *p) {
 
 static int path_exists(const char *p) { return access(p, F_OK) == 0; }
 
+/* Remove a file or a whole folder. Callers only pass paths below the ports folder. */
+static void remove_tree(const char *p) {
+	struct stat st;
+	if (lstat(p, &st) != 0) return;
+	if (S_ISDIR(st.st_mode)) {
+		DIR *d = opendir(p);
+		struct dirent *e;
+		while (d && (e = readdir(d))) {
+			char child[1024];
+			if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
+			snprintf(child, sizeof child, "%s/%s", p, e->d_name);
+			remove_tree(child);
+		}
+		if (d) closedir(d);
+		rmdir(p);
+	} else remove(p);
+}
+
 static int mkdir_p(const char *path) {
 	char tmp[600];
 	scpy(tmp, sizeof tmp, path);
@@ -1356,13 +1374,26 @@ static void comps_load(void) {
 		 "gitroms/gitroms.conf,gitroms/components.conf", "commit:xenodorian/GitROMs:dist/GitROMs.zip", "", 0, 1},
 		{"SGBA emulator", "https://github.com/xenodorian/SGBA/releases/download/latest/SGBA-arkos-aarch64.zip", ".",
 		 "README.txt", "", "", 0, 0},
-		/* The game is a .sgba (a zip). It is unpacked into the folder both launchers run
-		 * (the "Parry Perry" port and the SGBA menu), and the old single file is removed. */
-		{"Parry Perry (game)", "https://github.com/xenodorian/BibooSGBA/releases/download/latest/parry-perry.sgba",
-		 "sgba/games/parry-perry", "", "", "sgba/games/parry-perry.sgba", 0, 0},
+		/* A game lives in its own package: "Parry Perry.sh" plus its own folder, run on the SGBA
+		 * emulator above, which holds no real games. The earlier single-file and folder copies
+		 * inside the emulator's games folder are removed after a verified install. */
+		{"Parry Perry (game)", "https://github.com/xenodorian/BibooSGBA/releases/download/latest/parry-perry-port.zip",
+		 ".", "", "", "sgba/games/parry-perry.sgba,sgba/games/parry-perry", 0, 0},
 		{"Pokemon War and Murder", "https://github.com/xenodorian/Pokemon-War-and-Murder/raw/main/roms/Pokemon%20War%20and%20Murder.gba",
 		 "../gba/Pokemon War and Murder.gba", "", "commit:xenodorian/Pokemon-War-and-Murder:roms/Pokemon%20War%20and%20Murder.gba", "", 1, 0},
 	};
+	/* Entries of older components.conf files that a built-in entry replaced. */
+	static const char *obsolete[] = {
+		"https://github.com/xenodorian/BibooSGBA/releases/download/latest/parry-perry.sgba",
+	};
+	if (!getenv("GITROMS_NODEFAULTS"))
+		for (int i = 0; i < ncomp;) {
+			int gone = 0;
+			for (size_t o = 0; o < sizeof obsolete / sizeof obsolete[0]; o++) if (!strcmp(comp[i].url, obsolete[o])) gone = 1;
+			if (!gone) { i++; continue; }
+			for (int j = i; j + 1 < ncomp; j++) comp[j] = comp[j + 1];
+			ncomp--;
+		}
 	/* Built-in entries are authoritative for their URL: a line of an older components.conf
 	 * with the same URL is brought up to date (name, kind, destination), and a missing one is added. */
 	for (size_t d = 0; d < sizeof def / sizeof def[0] && !getenv("GITROMS_NODEFAULTS"); d++) {
@@ -1484,10 +1515,15 @@ static void up_fail_job(Comp *c) {
 
 static void up_finish_comp(Comp *c, int st, const char *msg) {
 	c->status = st;
-	if (st == CS_OK && c->retire[0] && c->kind == 0) {            /* the folder is complete: drop the old single-file copy */
-		char old[900];
-		snprintf(old, sizeof old, "%s/%s", g_ports, c->retire);
-		if (path_exists(old) && !remove(old)) logf_("removed old copy %s", old);
+	if (st == CS_OK && c->retire[0] && c->kind == 0) {            /* verified install: drop the old copies it replaces */
+		char list[240];
+		scpy(list, sizeof list, c->retire);
+		for (char *t = strtok(list, ","); t; t = strtok(NULL, ",")) {
+			char old[900];
+			if (!zx_safe_name(t)) continue;                          /* never outside the ports folder */
+			snprintf(old, sizeof old, "%s/%s", g_ports, t);
+			if (path_exists(old)) { remove_tree(old); logf_("removed old copy %s", old); }
+		}
 	}
 	if (msg != c->msg) scpy(c->msg, sizeof c->msg, msg);   /* callers often pass c->msg itself */
 	up_cleanup_tmp();
