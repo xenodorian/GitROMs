@@ -58,7 +58,7 @@ the old ones in the right folders (`ports/` for GitROMs and SGBA,
 itself was updated it says so; close and reopen it.
 
 Updates are decided by when the file was last modified on GitHub, never by size.
-GitROMs records that modified time when it installs something (in
+GitROMs records that modified date (shown at the right of each name) when it installs something (in
 `gitroms/data/updates.txt`). For a single
 file (a game or ROM) the same time means "Up to date" with no download; a newer
 time offers it. A bundle (GitROMs, SGBA) is different: every check scans every

@@ -63,7 +63,7 @@ app "$OPEN;logupd"
 chk "second check: bundle up to date" "st 0 | grep -q 'st=2'"
 chk "second check: game up to date" "st 1 | grep -q 'st=2'"
 B=$(stat_ bundle.zip); chk "second check read the file list but no file contents ($B bytes)" "[ $B -lt 300000 ]"
-chk "up to date message shows the modified date" "st 0 | grep -q 'modified .* UTC'"
+chk "modified date is kept apart from the message (drawn on the name line)" "st 0 | grep -q 'date=\\[[0-9]* [A-Z][a-z][a-z] [0-9:]*\\] msg=Up to date (125 files)\$'"
 chk "modified times were recorded in updates.txt" "grep -q '^Bundle	' \"$PORTS/gitroms/data/updates.txt\" && grep -q '^Game	' \"$PORTS/gitroms/data/updates.txt\""
 
 # 2b. same content but a newer modified time: bundle re-compares and stays up to date, game is offered

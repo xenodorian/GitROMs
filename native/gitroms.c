@@ -1308,14 +1308,14 @@ static void state_load(void) {
 	free(buf);
 }
 
-/* Human text for a stamp: "13 Oct 05:18 UTC" (empty for ETag-style stamps). */
+/* Human text for a stamp: "13 Oct 05:18" (empty for ETag-style stamps; shown right-aligned on the name line). */
 static void stamp_pretty(const char *st, char *out, size_t n) {
 	static const char *mon[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
 	int d, y, h, mi, mo;
 	char mname[8];
 	out[0] = 0;
-	if (sscanf(st, "%*3s, %d %3s %d %d:%d", &d, mname, &y, &h, &mi) == 5) snprintf(out, n, "%d %s %02d:%02d UTC", d, mname, h, mi);
-	else if (sscanf(st, "%d-%d-%dT%d:%d", &y, &mo, &d, &h, &mi) == 5 && mo >= 1 && mo <= 12) snprintf(out, n, "%d %s %02d:%02d UTC", d, mon[mo - 1], h, mi);
+	if (sscanf(st, "%*3s, %d %3s %d %d:%d", &d, mname, &y, &h, &mi) == 5) snprintf(out, n, "%d %s %02d:%02d", d, mname, h, mi);
+	else if (sscanf(st, "%d-%d-%dT%d:%d", &y, &mo, &d, &h, &mi) == 5 && mo >= 1 && mo <= 12) snprintf(out, n, "%d %s %02d:%02d", d, mon[mo - 1], h, mi);
 }
 
 /* components.conf lines:  name|zip or file|url|destination|keep list|self|stamp source
@@ -1613,8 +1613,8 @@ static int up_fast_ok(Comp *c) {
 }
 
 static void up_mod_msg(Comp *c, const char *base, char *out, size_t n) {
-	if (c->pretty[0]) snprintf(out, n, "%s, modified %s", base, c->pretty);
-	else scpy(out, n, base);
+	(void)c;                       /* the date is drawn on the name line, not in this text */
+	if (base != out) scpy(out, n, base);
 }
 
 /* The remote "last modified" stamp is known: decide, or go on to the file-by-file compare. */
@@ -2387,7 +2387,9 @@ static void draw_screen(uint32_t now) {
 			Comp *c = &comp[i];
 			int y = 56 + i * 58;
 			if (i == comp_sel) fill(8, y, VW - 16, 54, C_RAISED);
-			text_fit(16, y + 6, c->name, C_FG, 2, VW - 40);
+			int dw = c->pretty[0] ? (int)strlen(c->pretty) * 16 + 12 : 0;   /* date, right aligned, scale 2 */
+			text_fit(16, y + 6, c->name, C_FG, 2, VW - 40 - dw);
+			if (dw) text_fit(VW - 24 - (dw - 12), y + 6, c->pretty, C_MUTED, 2, dw - 12);
 			uint32_t col = c->status == CS_OK ? C_GOOD : (c->status == CS_UPDATE || c->status == CS_NEW) ? C_SIGNAL : c->status == CS_ERROR ? C_BAD : C_MUTED;
 			const char *m = c->status == CS_CHECKING ? "Checking..." : c->status == CS_IDLE ? "Waiting..." : c->status == CS_UPDATING ? "Updating..." : c->msg;
 			text_fit(16, y + 30, m, col, 2, VW - 40);
@@ -2486,7 +2488,7 @@ static void test_step(uint32_t now) {
 	else if (!strcmp(st, "logsel")) logf_("sel=%d", have_cur ? cur.sel : -1);
 	else if (!strcmp(st, "logscr")) logf_("scr=%d sp=%d", screen, sp);
 	else if (!strcmp(st, "logupd")) {
-		for (int i = 0; i < ncomp; i++) logf_("upd[%d] %s st=%d nneed=%d msg=%s", i, comp[i].name, comp[i].status, comp[i].nneed, comp[i].msg);
+		for (int i = 0; i < ncomp; i++) logf_("upd[%d] %s st=%d nneed=%d date=[%s] msg=%s", i, comp[i].name, comp[i].status, comp[i].nneed, comp[i].pretty, comp[i].msg);
 	}
 	else if (!strncmp(st, "jb=", 3) || !strncmp(st, "ju=", 3)) { /* raw joystick button down / up */
 		SDL_Event e;
