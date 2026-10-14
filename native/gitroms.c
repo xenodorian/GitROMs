@@ -71,6 +71,9 @@ void SDL_Delay(uint32_t);
 const char *SDL_GetCurrentVideoDriver(void);
 int SDL_NumJoysticks(void);
 void *SDL_JoystickOpen(int);
+const uint8_t *SDL_GetKeyboardState(int *);
+uint8_t SDL_JoystickGetButton(void *, int);
+uint8_t SDL_JoystickGetHat(void *, int);
 int SDL_PushEvent(SDL_Event *);
 
 /* ------------------------------------------------------------ constants */
@@ -79,7 +82,7 @@ int SDL_PushEvent(SDL_Event *);
 #define MAXITEMS 1500
 #define ROWS 12
 #define ROWH 30
-#define VERSION "3.5"
+#define VERSION "3.6"
 
 static uint32_t fb[VW * VH];
 
@@ -1373,13 +1376,15 @@ static void comps_load(void) {
 		{"GitROMs", "https://github.com/xenodorian/GitROMs/raw/main/dist/GitROMs.zip", ".",
 		 "gitroms/gitroms.conf,gitroms/components.conf", "commit:xenodorian/GitROMs:dist/GitROMs.zip", "", 0, 1},
 		{"SGBA emulator", "https://github.com/xenodorian/SGBA/releases/download/latest/SGBA-arkos-aarch64.zip", ".",
-		 "README.txt", "", "", 0, 0},
+		 "README.txt,sgba/controls.json", "", "", 0, 0},
 		/* A game lives in its own package: "Parry Perry.sh" plus the one compiled .sgba in its own
 		 * folder (parry-perry-game/), run on the SGBA emulator above, which holds no real games.
 		 * Earlier copies are removed after a verified install: the file and folder inside the
 		 * emulator's games folder, and the loose unpacked project in parry-perry/. */
 		{"Parry Perry (game)", "https://github.com/xenodorian/BibooSGBA/releases/download/latest/parry-perry-port.zip",
 		 ".", "", "", "sgba/games/parry-perry.sgba,sgba/games/parry-perry,parry-perry", 0, 0},
+		{"Slingshot Orbits", "https://github.com/xenodorian/SGBA/releases/download/latest/slingshot-orbits-port.zip",
+		 ".", "", "", "slingshot_orbits.sgba,sgba/games/slingshot_orbits.sgba", 0, 0},
 		{"Pokemon War and Murder", "https://github.com/xenodorian/Pokemon-War-and-Murder/raw/main/roms/Pokemon%20War%20and%20Murder.gba",
 		 "../gba/Pokemon War and Murder.gba", "", "commit:xenodorian/Pokemon-War-and-Murder:roms/Pokemon%20War%20and%20Murder.gba", "", 1, 0},
 	};
@@ -2126,33 +2131,73 @@ static void act(int a) {
  * holding up/down repeats on our own steady timer. */
 #define SRC_KEY 1
 #define SRC_PAD 2
-#define REPEAT_DELAY_MS 380
-#define REPEAT_RATE_MS 85
-#define BOUNCE_MS 125   /* a second fresh press of one action inside this is the same tap */
-static struct { int src; uint32_t next_rep, last_fire; } hold[16];
+#define REPEAT_DELAY_MS 450
+#define REPEAT_RATE_MS 90
+#define BOUNCE_MS 150   /* a second fresh press of one action inside this is the same tap */
+/* verified: SDL's own key/button state confirmed the press when it arrived, so a later
+ * "released" can be checked against that state. A hold that cannot be verified never
+ * auto-repeats: a lost release must not turn one tap into a run of rows. */
+static struct { int src, scan, verified; uint32_t next_rep, last_fire; } hold[16];
+static void *g_js[8];
+static int g_njs, g_test_inject;
+static int g_trace = 500;     /* the first input events of a run are written to gitroms.log */
+#define TRACE(...) do { if (g_trace > 0) { g_trace--; logf_(__VA_ARGS__); } } while (0)
+static const char *ANAME[] = {"none", "up", "down", "left", "right", "ok", "back", "start", "select", "pgup", "pgdn", "info"};
 
-static void input_press(int a, int src, uint32_t now) {
+static void js_remember(void *j) {
+	if (!j) return;
+	for (int i = 0; i < g_njs; i++) if (g_js[i] == j) return;
+	if (g_njs < 8) g_js[g_njs++] = j;
+}
+
+static int pad_down_now(int a);
+static int key_down_now(int scan) {
+	const uint8_t *ks = SDL_GetKeyboardState(NULL);
+	return ks && scan > 0 && scan < 512 && ks[scan];
+}
+/* src: which source; scan: the key's scancode (keys only). */
+static void input_press(int a, int src, uint32_t now, int scan) {
 	if (a <= A_NONE || a > A_INFO) return;
-	if (hold[a].src) { hold[a].src |= src; return; }       /* other source already holds it */
+	if (hold[a].src) {                                       /* the other source already holds it: same tap */
+		hold[a].src |= src;
+		if (src == SRC_KEY) hold[a].scan = scan;
+		TRACE("in %s +%s (merged)", ANAME[a], src == SRC_KEY ? "key" : "pad");
+		return;
+	}
 	hold[a].src = src;
+	hold[a].scan = scan;
+	hold[a].verified = g_test_inject || (src == SRC_KEY ? key_down_now(scan) : pad_down_now(a));
 	hold[a].next_rep = now + REPEAT_DELAY_MS;
-	if (hold[a].last_fire && now - hold[a].last_fire < BOUNCE_MS) return;
+	if (hold[a].last_fire && now - hold[a].last_fire < BOUNCE_MS) {
+		TRACE("in %s %s ignored (bounce %ums)", ANAME[a], src == SRC_KEY ? "key" : "pad", (unsigned)(now - hold[a].last_fire));
+		return;
+	}
 	hold[a].last_fire = now;
+	TRACE("in %s %s fire (verified %d)", ANAME[a], src == SRC_KEY ? "key" : "pad", hold[a].verified);
 	act(a);
 }
 
 static void input_release(int a, int src) {
 	if (a <= A_NONE || a > A_INFO) return;
 	hold[a].src &= ~src;
+	TRACE("in %s %s released", ANAME[a], src == SRC_KEY ? "key" : "pad");
 }
 
 static void input_tick(uint32_t now) {
+	/* A release that never arrived is caught here: SDL's own state says the control is up. */
+	if (!g_test_inject)
+		for (int a = A_UP; a <= A_INFO; a++) {
+			if (!hold[a].src || !hold[a].verified) continue;
+			if ((hold[a].src & SRC_KEY) && !key_down_now(hold[a].scan)) { hold[a].src &= ~SRC_KEY; TRACE("in %s key release was missing", ANAME[a]); }
+			if ((hold[a].src & SRC_PAD) && !pad_down_now(a)) { hold[a].src &= ~SRC_PAD; TRACE("in %s pad release was missing", ANAME[a]); }
+		}
 	static const int rep[] = {A_UP, A_DOWN};              /* paging and buttons never auto-repeat */
 	for (int i = 0; i < 2; i++) {
 		int a = rep[i];
-		if (hold[a].src && now >= hold[a].next_rep) {
+		if (hold[a].src && hold[a].verified && now >= hold[a].next_rep) {
 			hold[a].last_fire = now;
 			hold[a].next_rep = now + REPEAT_RATE_MS;
+			TRACE("in %s repeat", ANAME[a]);
 			act(a);
 		}
 	}
@@ -2184,6 +2229,17 @@ static void build_btn_map(void) {
 	memset(btn_act, 0, sizeof btn_act);
 	for (int r = 0; r < 12; r++)
 		if (role_btn[r] >= 0 && role_btn[r] < 32) btn_act[role_btn[r]] = ROLE_ACT[r];
+}
+
+/* Is any pad control mapped to action `a` physically down right now? */
+static int pad_down_now(int a) {
+	for (int j = 0; j < g_njs; j++) {
+		for (int r = 0; r < 12; r++)
+			if (ROLE_ACT[r] == a && role_btn[r] >= 0 && role_btn[r] < 32 && SDL_JoystickGetButton(g_js[j], role_btn[r])) return 1;
+		uint8_t h = SDL_JoystickGetHat(g_js[j], 0);
+		if ((a == A_UP && (h & 1)) || (a == A_RIGHT && (h & 2)) || (a == A_DOWN && (h & 4)) || (a == A_LEFT && (h & 8))) return 1;
+	}
+	return 0;
 }
 
 /* ------------------------------------------------------------- drawing */
@@ -2516,6 +2572,7 @@ static void write_ppm(const char *path) {
 }
 
 static void test_init(const char *spec) {
+	g_test_inject = 1;      /* injected events cannot be checked against SDL state */
 	static char copy[16384];
 	scpy(copy, sizeof copy, spec);
 	for (char *s = strtok(copy, ";"); s && ntsteps < 256; s = strtok(NULL, ";")) tsteps[ntsteps++] = s;
@@ -2535,9 +2592,9 @@ static void test_step(uint32_t now) {
 	if (!strncmp(st, "wait=", 5)) twait_until = now + (uint32_t)(atof(st + 5) * 1000);
 	else if (!strncmp(st, "act=", 4)) { act(act_from_name(st + 4)); twait_until = now + 100; }
 	else if (!strncmp(st, "shot=", 5)) tshot = st + 5;
-	else if (!strncmp(st, "kd=", 3)) input_press(act_from_name(st + 3), SRC_KEY, now);
+	else if (!strncmp(st, "kd=", 3)) input_press(act_from_name(st + 3), SRC_KEY, now, 0);
 	else if (!strncmp(st, "ku=", 3)) input_release(act_from_name(st + 3), SRC_KEY);
-	else if (!strncmp(st, "pd=", 3)) input_press(act_from_name(st + 3), SRC_PAD, now);
+	else if (!strncmp(st, "pd=", 3)) input_press(act_from_name(st + 3), SRC_PAD, now, 0);
 	else if (!strncmp(st, "pu=", 3)) input_release(act_from_name(st + 3), SRC_PAD);
 	else if (!strcmp(st, "logsel")) logf_("sel=%d", have_cur ? cur.sel : -1);
 	else if (!strcmp(st, "logscr")) logf_("scr=%d sp=%d", screen, sp);
@@ -2667,7 +2724,7 @@ int main(void) {
 	logf_("input: %s; buttons up%d down%d left%d right%d a%d b%d x%d y%d l1_%d r1_%d select%d start%d", g_keys_only ? "keys from gptokeyb (pad ignored)" : "raw joystick + keys",
 	      role_btn[0], role_btn[1], role_btn[2], role_btn[3], role_btn[4], role_btn[5], role_btn[6], role_btn[7], role_btn[8], role_btn[9], role_btn[10], role_btn[11]);
 	if (!g_keys_only)
-		for (int i = 0, n = SDL_NumJoysticks(); i < n; i++) SDL_JoystickOpen(i);
+		for (int i = 0, n = SDL_NumJoysticks(); i < n; i++) js_remember(SDL_JoystickOpen(i));
 
 	if ((e = getenv("GITROMS_TEST"))) test_init(e);
 
@@ -2687,11 +2744,11 @@ int main(void) {
 				memcpy(&scan, (uint8_t *)&ev + 16, 4);
 				int a = key_action((int)scan);
 				if (ev.type == SDL_KEYUP) input_release(a, SRC_KEY);
-				else if (!((uint8_t *)&ev)[13]) input_press(a, SRC_KEY, t0);   /* ignore OS auto-repeat */
+				else if (!((uint8_t *)&ev)[13]) input_press(a, SRC_KEY, t0, (int)scan);   /* ignore OS auto-repeat */
 			} else if (ev.type == SDL_JOYBUTTONDOWN || ev.type == SDL_JOYBUTTONUP) {
 				int b = ((uint8_t *)&ev)[12], a = (b >= 0 && b < 32) ? btn_act[b] : A_NONE;
 				if (g_keys_only) continue;
-				if (ev.type == SDL_JOYBUTTONDOWN) input_press(a, SRC_PAD, t0);
+				if (ev.type == SDL_JOYBUTTONDOWN) input_press(a, SRC_PAD, t0, 0);
 				else input_release(a, SRC_PAD);
 			} else if (ev.type == SDL_JOYHATMOTION) {
 				static int hat_prev;
@@ -2699,14 +2756,14 @@ int main(void) {
 				static const int bit[4] = {1, 2, 4, 8}, hact[4] = {A_UP, A_RIGHT, A_DOWN, A_LEFT};
 				if (g_keys_only) continue;
 				for (int i = 0; i < 4; i++) {
-					if ((v & bit[i]) && !(hat_prev & bit[i])) input_press(hact[i], SRC_PAD, t0);
+					if ((v & bit[i]) && !(hat_prev & bit[i])) input_press(hact[i], SRC_PAD, t0, 0);
 					if (!(v & bit[i]) && (hat_prev & bit[i])) input_release(hact[i], SRC_PAD);
 				}
 				hat_prev = v;
 			} else if (ev.type == SDL_JOYDEVICEADDED) {
 				int32_t which;
 				memcpy(&which, (uint8_t *)&ev + 8, 4);
-				if (!g_keys_only) SDL_JoystickOpen(which);
+				if (!g_keys_only) js_remember(SDL_JoystickOpen(which));
 			}
 		}
 		input_tick(t0);

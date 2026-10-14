@@ -34,5 +34,6 @@ chk "holding 1 s repeats steadily ($d rows, expect 7 to 11)" "[ $d -ge 7 ] && [ 
 chk "five separate taps move exactly 5 rows" "[ \$(( \${V[4]:-0} - \${V[3]:-0} )) = 5 ]"
 chk "doubled 'up' moves exactly 1 row up" "[ \$(( \${V[4]:-0} - \${V[5]:-0} )) = 1 ]"
 chk "doubled page-right jumps once (12 rows)" "[ \$(( \${V[6]:-0} - \${V[5]:-0} )) = 12 ]"
+chk "input trace is written to the log (fire, merged, released)" "grep -q 'in down key fire' \"$T/home/gitroms.log\" && grep -q 'in down +pad (merged)' \"$T/home/gitroms.log\" && grep -q 'in down key released' \"$T/home/gitroms.log\""
 chk "no fatal errors in log" "! grep -q FATAL \"$T/home/gitroms.log\""
 exit $fail
