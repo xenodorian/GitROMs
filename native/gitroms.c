@@ -82,7 +82,7 @@ int SDL_PushEvent(SDL_Event *);
 #define MAXITEMS 1500
 #define ROWS 12
 #define ROWH 30
-#define VERSION "3.6"
+#define VERSION "3.7"
 
 static uint32_t fb[VW * VH];
 
@@ -1229,7 +1229,7 @@ enum { CS_IDLE, CS_CHECKING, CS_OK, CS_UPDATE, CS_NEW, CS_ERROR, CS_UPDATING };
 enum { UPH_NONE, UPH_SIZE, UPH_TAIL, UPH_CD, UPH_CMP, UPH_FETCH, UPH_EXTRACT, UPH_FILEDL, UPH_STAMP };
 
 typedef struct {
-	char name[48], url[360], dest[240], keep[240], src[200], retire[240];
+	char name[48], url[360], dest[240], keep[240], src[200], retire[640];
 	char stamp[96], rec[96], pretty[40], sent[3][200];
 	int nsent;
 	int kind, self;          /* kind 0 = zip bundle, 1 = single file */
@@ -1376,7 +1376,10 @@ static void comps_load(void) {
 		{"GitROMs", "https://github.com/xenodorian/GitROMs/raw/main/dist/GitROMs.zip", ".",
 		 "gitroms/gitroms.conf,gitroms/components.conf", "commit:xenodorian/GitROMs:dist/GitROMs.zip", "", 0, 1},
 		{"SGBA emulator", "https://github.com/xenodorian/SGBA/releases/download/latest/SGBA-arkos-aarch64.zip", ".",
-		 "README.txt,sgba/controls.json", "", "", 0, 0},
+		 "README.txt,sgba/controls.json", "",
+		 /* the old Python emulator's files, removed once the native one is verified */
+		 "sgba/python,sgba/site,sgba/cache/sgba-package-cache,sgba/runtime.py,sgba/sgba_audio.py,sgba/sgba_canvas.py,sgba/sgba_gfx.py,"
+		 "sgba/sgba_js.py,sgba/sgba_js_shim.js,sgba/sgba_js_ui.py,sgba/sgba_package.py,sgba/sgba_shell.py", 0, 0},
 		/* A game lives in its own package: "Parry Perry.sh" plus the one compiled .sgba in its own
 		 * folder (parry-perry-game/), run on the SGBA emulator above, which holds no real games.
 		 * Earlier copies are removed after a verified install: the file and folder inside the
@@ -1522,7 +1525,7 @@ static void up_fail_job(Comp *c) {
 static void up_finish_comp(Comp *c, int st, const char *msg) {
 	c->status = st;
 	if (st == CS_OK && c->retire[0] && c->kind == 0) {            /* verified install: drop the old copies it replaces */
-		char list[240];
+		char list[640];
 		scpy(list, sizeof list, c->retire);
 		for (char *t = strtok(list, ","); t; t = strtok(NULL, ",")) {
 			char old[900];

@@ -92,3 +92,9 @@ so the result needs only GLIBC_2.17 (aarch64) or GLIBC_2.4 (armhf).
 - The only Parry Perry URL GitROMs uses is `.../BibooSGBA/releases/download/latest/parry-perry-port.zip`. The release still carries redundant leftovers (`parry-perry.sgba`, `parry-perry-arkos-aarch64.zip`, `parry-perry-native-arkos-aarch64.zip`). They are never downloaded or listed by GitROMs, and the built-in list treats the old `.sgba` URL as obsolete: a card's old components.conf line for it is dropped on load.
 - After a verified install, GitROMs removes the old copies listed in a component's last field (files or folders under the ports folder; `sgba/games/parry-perry.sgba`, `sgba/games/parry-perry` and the loose `parry-perry` here).
 - Cause of the original "device has an old build" report: the updater wrote `sgba/games/parry-perry.sgba`, but the old standalone port ran the loose folder `sgba/games/parry-perry/`. Two install paths existed.
+
+## The emulator is the native C runtime (2026-10-14)
+- Owner order: speed above everything, Python may go. The SGBA emulator package (`SGBA-arkos-aarch64.zip`, about 1.5 MB) is now the native C runtime: `SGBA.sh` plus `sgba/sgba`, an SDL2 fallback library, `controls.json`, and the demo and input lab (browser games, because the C runtime does not run Python games). Python is gone from the device.
+- GitROMs removes the old Python emulator's files (`sgba/python`, `sgba/site`, the `sgba/*.py` files, `sgba/sgba_js_shim.js`, `sgba/cache/sgba-package-cache`) after the new package is verified. A `controls.json` you changed is kept.
+- Games still install as their own package (launcher + one `.sgba`) and start the emulator with `SGBA.sh path/to/game.sgba`. Parry Perry and Slingshot Orbits need no change.
+- Unverified on the R36S: the native runtime has run only on a PC and under qemu-aarch64. If it fails to start, `sgba/sgba_launch.log` and `sgba/sgba.log` say why.
