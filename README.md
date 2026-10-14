@@ -30,3 +30,7 @@ sysroot). Not yet run on a real R36S. See [docs/DECISIONS.md](docs/DECISIONS.md)
 - `tests/` `check_package.py` (static), `smoke_test.sh` and `update_test.sh`, `real_release_test.sh` (headless runs; the last one is online and downloads a real release asset), `mock_github.py`
 - `port-love/` the LOVE version. Superseded: it needs a LOVE runtime the device lacked.
 - `GitROMs/` the first Python/pygame attempt. Incomplete (`main.py` never committed).
+
+## Sending diagnostic reports
+The SGBA emulator saves crash, error and frame rate reports in `sgba/reports/`. Open `[Send reports]` at the top of the repo list to post them as issues in a GitHub repository.
+First use: GitROMs creates `gitroms/data/upload.conf`. On a computer, set `repo=` and paste a fine-grained GitHub token (Issues: read and write on that repo) after `token=`, then press SELECT on the screen to reload. The default repo is public, so anything sent there is public.

@@ -98,3 +98,10 @@ so the result needs only GLIBC_2.17 (aarch64) or GLIBC_2.4 (armhf).
 - GitROMs removes the old Python emulator's files (`sgba/python`, `sgba/site`, the `sgba/*.py` files, `sgba/sgba_js_shim.js`, `sgba/cache/sgba-package-cache`) after the new package is verified. A `controls.json` you changed is kept.
 - Games still install as their own package (launcher + one `.sgba`) and start the emulator with `SGBA.sh path/to/game.sgba`. Parry Perry and Slingshot Orbits need no change.
 - Unverified on the R36S: the native runtime has run only on a PC and under qemu-aarch64. If it fails to start, `sgba/sgba_launch.log` and `sgba/sgba.log` say why.
+
+## Report upload (2026-10-14, version 3.8)
+- The SGBA emulator writes diagnostics to `sgba/reports/` (see the SGBA repo notes): `sessions.log` with frame statistics per game session, plus `crash-*`, `unclean-*`, `errors-*` and `failed-*` text files.
+- GitROMs got an upload side. The root list has `[Send reports]`. It posts each report file, plus one generated status report (tails of `sessions.log`, `sgba_launch.log`, `sgba.log`, `gitroms.log` and `updates.txt`), as a new issue with `POST /repos/<repo>/issues`. A sent report file moves to `sgba/reports/sent/`. The first failure stops the run with a readable message (401 token rejected, 403 missing Issues permission, 404 repo not found).
+- Destination and token live in `gitroms/data/upload.conf` (`repo=`, `token=`). The file is created with an empty token on first use and is not in the update package, so updates never touch it. A token cannot be typed on the handheld, so it is pasted into that file from a computer. No token is stored in any repo. The token reaches curl through a private temp config file, not the command line, and is not logged.
+- Default repo is `xenodorian/GitROMs`, which is public: reports (device name, logs, game names) are visible to anyone. Point `repo=` at a private repo to avoid that.
+- Test: `tests/reports_test.sh` against `tests/mock_reports.py`. Not tried against real GitHub or on the device.

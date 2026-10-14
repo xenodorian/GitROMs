@@ -82,14 +82,14 @@ int SDL_PushEvent(SDL_Event *);
 #define MAXITEMS 1500
 #define ROWS 12
 #define ROWH 30
-#define VERSION "3.7"
+#define VERSION "3.8"
 
 static uint32_t fb[VW * VH];
 
-enum { K_REPO, K_DIR, K_FILE, K_REL, K_UPD };
+enum { K_REPO, K_DIR, K_FILE, K_REL, K_UPD, K_RPT };
 #define FK_REL 2 /* frame kind: latest-release asset list */
 enum { SC_BUSY, SC_LIST, SC_CONFIRM, SC_CONFLICT, SC_DOWNLOAD, SC_RESULT,
-       SC_ERROR, SC_HISTORY, SC_EXIT, SC_SYSINFO, SC_UPDATES, SC_UPDATING };
+       SC_ERROR, SC_HISTORY, SC_EXIT, SC_SYSINFO, SC_UPDATES, SC_UPDATING, SC_REPORTS };
 enum { A_NONE, A_UP, A_DOWN, A_LEFT, A_RIGHT, A_OK, A_BACK, A_START, A_SELECT,
        A_PGUP, A_PGDN, A_INFO };
 enum { T_NONE, T_REPOS, T_DIR, T_DL, T_REL };
@@ -886,11 +886,17 @@ static void finish_load(void) {
 		u.kind = K_UPD;
 		scpy(u.name, sizeof u.name, "[Check for updates]");
 		scpy(u.desc, sizeof u.desc, "GitROMs, the SGBA emulator and your games");
+		Item r;
+		memset(&r, 0, sizeof r);
+		r.kind = K_RPT;
+		scpy(r.name, sizeof r.name, "[Send reports]");
+		scpy(r.desc, sizeof r.desc, "Upload SGBA crash and frame rate reports to GitHub");
 		if (!task.acc) task.acc = malloc(MAXITEMS * sizeof *task.acc);
-		if (task.acc && task.nacc < MAXITEMS) {
-			memmove(task.acc + 1, task.acc, (size_t)task.nacc * sizeof *task.acc);
+		if (task.acc && task.nacc < MAXITEMS - 1) {
+			memmove(task.acc + 2, task.acc, (size_t)task.nacc * sizeof *task.acc);
 			task.acc[0] = u;
-			task.nacc++;
+			task.acc[1] = r;
+			task.nacc += 2;
 		}
 	}
 	if (task.target.kind != K_REPO) qsort(task.acc, (size_t)task.nacc, sizeof *task.acc, item_cmp);
@@ -1971,6 +1977,269 @@ static void up_start_update(void) {
 	up_advance();
 }
 
+
+/* ------------------------------------------------------- diagnostic reports */
+/* SGBA writes crash, "did not exit cleanly" and error reports to <ports>/sgba/reports/ (text files). This screen posts each one,
+ * plus a status report (the logs of GitROMs and SGBA and the per-game frame statistics), as a new issue in a GitHub repo.
+ * The target repo and a token come from upload.conf next to gitroms.log (created empty on first use). */
+enum { RP_IDLE, RP_SENDING, RP_DONE };
+#define RP_MAX 24
+static struct {
+	int phase, n, i, sent, started;
+	char repo[100], token[200], dir[420], msg[300], url[240];
+	char file[RP_MAX][96];
+	Job job;
+} rp;
+
+static void rp_conf_load(void) {
+	char path[460];
+	snprintf(path, sizeof path, "%s/upload.conf", g_home);
+	rp.repo[0] = rp.token[0] = 0;
+	scpy(rp.repo, sizeof rp.repo, "xenodorian/GitROMs");
+	char *txt = read_file(path, 4096, NULL);
+	if (!txt) {
+		FILE *f = fopen(path, "wb");
+		if (f) {
+			fputs("# GitROMs report upload. Each report is posted as a new issue in this GitHub repository.\n"
+			      "# Make a fine-grained token (GitHub > Settings > Developer settings > Fine-grained tokens) for that repository\n"
+			      "# with Issues: Read and write, and paste it after token=\n"
+			      "# The repository is public unless you pick a private one, so keep personal data out of it.\n"
+			      "repo=xenodorian/GitROMs\ntoken=\n", f);
+			fclose(f);
+		}
+		return;
+	}
+	for (char *line = strtok(txt, "\n"); line; line = strtok(NULL, "\n")) {
+		while (*line == ' ' || *line == '\t') line++;
+		char *eq = strchr(line, '=');
+		if (line[0] == '#' || !eq) continue;
+		*eq = 0;
+		char *v = eq + 1;
+		size_t l = strlen(v);
+		while (l && (v[l - 1] == '\r' || v[l - 1] == ' ')) v[--l] = 0;
+		if (!strcmp(line, "repo") && v[0]) scpy(rp.repo, sizeof rp.repo, v);
+		else if (!strcmp(line, "token")) scpy(rp.token, sizeof rp.token, v);
+	}
+	free(txt);
+}
+
+static int rp_name_cmp(const void *a, const void *b) { return strcmp((const char *)b, (const char *)a); }
+
+static void rp_scan(void) {
+	rp.n = 0;
+	snprintf(rp.dir, sizeof rp.dir, "%s/sgba/reports", g_ports);
+	DIR *d = opendir(rp.dir);
+	if (!d) return;
+	struct dirent *e;
+	while ((e = readdir(d)) && rp.n < RP_MAX) {
+		size_t l = strlen(e->d_name);
+		if (l > 4 && l < sizeof rp.file[0] && !strcmp(e->d_name + l - 4, ".txt")) { memcpy(rp.file[rp.n], e->d_name, l + 1); rp.n++; }
+	}
+	closedir(d);
+	qsort(rp.file, (size_t)rp.n, sizeof rp.file[0], rp_name_cmp);
+}
+
+static void rp_open(void) {
+	rp_conf_load();
+	rp_scan();
+	if (rp.phase != RP_SENDING) { rp.phase = RP_IDLE; rp.msg[0] = 0; rp.sent = 0; }
+	screen = SC_REPORTS;
+}
+
+static void rp_jesc(FILE *o, const char *s, size_t n) {
+	for (size_t i = 0; i < n; i++) {
+		unsigned char c = (unsigned char)s[i];
+		if (c == '"' || c == '\\') { fputc('\\', o); fputc(c, o); }
+		else if (c == '\n') fputs("\\n", o);
+		else if (c == '\t') fputs("\\t", o);
+		else if (c == '\r') continue;
+		else if (c < 32 || c > 126) fputc('?', o);
+		else fputc(c, o);
+	}
+}
+
+/* the last `lines` lines of a text file (at most 16 KB), appended under a heading */
+static void rp_tail(FILE *o, const char *path, int lines, const char *title) {
+	long long sz = file_size(path);
+	if (sz <= 0) return;
+	FILE *f = fopen(path, "rb");
+	if (!f) return;
+	long from = sz > 16384 ? (long)(sz - 16384) : 0;
+	fseek(f, from, SEEK_SET);
+	char *buf = malloc(16385);
+	if (!buf) { fclose(f); return; }
+	size_t n = fread(buf, 1, 16384, f);
+	fclose(f);
+	buf[n] = 0;
+	char *start = buf + n;
+	int seen = 0;
+	while (start > buf && seen <= lines) { start--; if (*start == '\n' && start != buf + n - 1) seen++; }
+	if (*start == '\n') start++;
+	fprintf(o, "\n--- %s (last %d lines) ---\n%s", title, lines, start);
+	if (n && buf[n - 1] != '\n') fputc('\n', o);
+	free(buf);
+}
+
+/* writes tmp/rp_body.json for entry idx (an incident file, or the status report when idx == rp.n); returns the title via `title` */
+static int rp_build(int idx, char *title, size_t tn) {
+	char host[64] = "device", txt[460], jpath[460], when[32];
+	gethostname(host, sizeof host - 1);
+	time_t t = time(NULL);
+	strftime(when, sizeof when, "%Y-%m-%d %H:%M", localtime(&t));
+	snprintf(txt, sizeof txt, "%s/rp_body.txt", g_tmp);
+	snprintf(jpath, sizeof jpath, "%s/rp_body.json", g_tmp);
+	FILE *o = fopen(txt, "wb");
+	if (!o) return 0;
+	if (idx < rp.n) {
+		char p[540], kind[32] = "report";
+		snprintf(p, sizeof p, "%s/%s", rp.dir, rp.file[idx]);
+		const char *dash = strchr(rp.file[idx], '-');
+		if (dash && (size_t)(dash - rp.file[idx]) < sizeof kind) { memcpy(kind, rp.file[idx], (size_t)(dash - rp.file[idx])); kind[dash - rp.file[idx]] = 0; }
+		long long sz = file_size(p);
+		char *body = read_file(p, 56000, NULL);
+		if (body) { fputs(body, o); if (sz > 56000) fputs("\n[cut: report was larger than 56 KB]\n", o); free(body); }
+		snprintf(title, tn, "[%s] %s %s", kind, host, when);
+	} else {
+		char p[560];
+		fprintf(o, "GitROMs status report\nversion: %s\ntime: %s\ndevice: %s\nhome: %s\nports: %s\n", VERSION, when, host, g_home, g_ports);
+		snprintf(p, sizeof p, "%s/sessions.log", rp.dir);
+		rp_tail(o, p, 25, "sgba/reports/sessions.log");
+		snprintf(p, sizeof p, "%s/sgba/sgba_launch.log", g_ports);
+		rp_tail(o, p, 40, "sgba/sgba_launch.log");
+		snprintf(p, sizeof p, "%s/sgba/sgba.log", g_ports);
+		rp_tail(o, p, 60, "sgba/sgba.log");
+		rp_tail(o, g_logpath, 80, "gitroms.log");
+		rp_tail(o, g_statepath, 20, "updates.txt");
+		snprintf(title, tn, "[status] %s %s", host, when);
+	}
+	fclose(o);
+	size_t n = 0;
+	char *body = read_file(txt, 60000, &n);
+	remove(txt);
+	if (!body) return 0;
+	FILE *j = fopen(jpath, "wb");
+	if (!j) { free(body); return 0; }
+	fputs("{\"title\":\"", j);
+	rp_jesc(j, title, strlen(title));
+	fputs("\",\"body\":\"", j);
+	rp_jesc(j, body, n);
+	fputs("\"}", j);
+	fclose(j);
+	free(body);
+	return 1;
+}
+
+static void rp_explain(const Job *j, char *out, size_t n) {
+	const char *e = strstr(j->errtext, "error: ");
+	if (e && isdigit((unsigned char)e[7])) {
+		int code = atoi(e + 7);
+		if (code == 401) snprintf(out, n, "GitHub rejected the token (401). Check token= in upload.conf.");
+		else if (code == 403) snprintf(out, n, "The token is not allowed to post here (403). It needs Issues: Read and write.");
+		else if (code == 404) snprintf(out, n, "Repository not found, or the token cannot see it (404). Check repo= in upload.conf.");
+		else if (code == 410) snprintf(out, n, "That repository has issues turned off (410).");
+		else if (code == 422) snprintf(out, n, "GitHub refused the report (422).");
+		else snprintf(out, n, "GitHub returned error %d.", code);
+		return;
+	}
+	explain(j, out, n);
+}
+
+static int rp_post(void) {
+	char title[200], url[300], cfg[460], jpath[460], out[460], errp[460];
+	if (!rp_build(rp.i, title, sizeof title)) return 0;
+	snprintf(url, sizeof url, "%s/repos/%s/issues", g_api, rp.repo);
+	snprintf(cfg, sizeof cfg, "%s/rp.cfg", g_tmp);
+	snprintf(jpath, sizeof jpath, "%s/rp_body.json", g_tmp);
+	snprintf(out, sizeof out, "%s/rp_resp.json", g_tmp);
+	snprintf(errp, sizeof errp, "%s/rp.err", g_tmp);
+	int fd = open(cfg, O_WRONLY | O_CREAT | O_TRUNC, 0600);   /* the token goes through a private file, not the command line */
+	if (fd < 0) return 0;
+	char line[320];
+	int ln = snprintf(line, sizeof line, "header = \"Authorization: Bearer %s\"\n", rp.token);
+	if (write(fd, line, (size_t)ln) < 0) { close(fd); return 0; }
+	close(fd);
+	Job *j = &rp.job;
+	memset(j, 0, sizeof *j);
+	scpy(j->out, sizeof j->out, out);
+	scpy(j->err, sizeof j->err, errp);
+	pid_t pid = fork();
+	if (pid < 0) return 0;
+	if (pid == 0) {
+		int efd = open(errp, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+		if (efd >= 0) { dup2(efd, 2); close(efd); }
+		int nul = open("/dev/null", O_RDWR);
+		if (nul >= 0) { dup2(nul, 0); dup2(nul, 1); close(nul); }
+		char data[480];
+		snprintf(data, sizeof data, "@%s", jpath);
+		const char *av[] = { "curl", "-sS", "-f", "--connect-timeout", "15", "--max-time", "60", "-K", cfg, "-X", "POST",
+		                     "-A", "GitROMs-R36S/" VERSION, "-H", "Accept: application/vnd.github+json", "-H", "Content-Type: application/json",
+		                     "--data-binary", data, "-o", out, url, NULL };
+		execvp("curl", (char *const *)av);
+		_exit(127);
+	}
+	j->pid = pid;
+	j->running = 1;
+	logf_("report: posting %s (%d of %d)", rp.i < rp.n ? rp.file[rp.i] : "status report", rp.i + 1, rp.n + 1);
+	return 1;
+}
+
+static void rp_start(void) {
+	if (!rp.token[0]) return;
+	rp.phase = RP_SENDING;
+	rp.i = 0;
+	rp.sent = 0;
+	rp.started = 0;
+	rp.url[0] = 0;
+	scpy(rp.msg, sizeof rp.msg, "Sending...");
+}
+
+static void rp_finish(const char *msg) {
+	rp.phase = RP_DONE;
+	scpy(rp.msg, sizeof rp.msg, msg);
+	char cfg[460];
+	snprintf(cfg, sizeof cfg, "%s/rp.cfg", g_tmp);
+	remove(cfg);
+	rp_scan();
+	logf_("report: %s", msg);
+}
+
+static void rp_step(void) {
+	if (rp.phase != RP_SENDING) return;
+	if (!rp.started) {
+		if (rp.i > rp.n) { char m[120]; snprintf(m, sizeof m, "Sent %d report%s.", rp.sent, rp.sent == 1 ? "" : "s"); rp_finish(m); return; }
+		if (!rp_post()) { rp_finish("Could not prepare the report."); return; }
+		rp.started = 1;
+		return;
+	}
+	if (!job_poll(&rp.job)) return;
+	rp.started = 0;
+	if (rp.job.rc != 0) {
+		char m[300];
+		rp_explain(&rp.job, m, sizeof m);
+		rp_finish(m);
+		return;
+	}
+	char *resp = read_file(rp.job.out, 8192, NULL);
+	if (resp) {
+		J *r = json_parse(resp, strlen(resp));
+		const char *u = r ? jstr(r, "html_url") : NULL;
+		if (u) scpy(rp.url, sizeof rp.url, u);
+		j_free(r);
+		free(resp);
+	}
+	remove(rp.job.out);
+	rp.sent++;
+	if (rp.i < rp.n) {                                  /* an incident file goes into sent/ so it is not posted twice */
+		char from[560], to[600], dir[480];
+		snprintf(dir, sizeof dir, "%s/sent", rp.dir);
+		mkdir_p(dir);
+		snprintf(from, sizeof from, "%s/%s", rp.dir, rp.file[rp.i]);
+		snprintf(to, sizeof to, "%s/%s", dir, rp.file[rp.i]);
+		rename(from, to);
+	}
+	rp.i++;
+}
+
 static void updates_open(void) {
 	if (!ncomp) comps_load();
 	comp_sel = 0;
@@ -2032,6 +2301,8 @@ static void act(int a) {
 			if (it->kind == K_UPD) {
 				up_from = SC_LIST;
 				updates_open();
+			} else if (it->kind == K_RPT) {
+				rp_open();
 			} else if (it->kind == K_REPO) {
 				scpy(f.repo, sizeof f.repo, it->path);
 				scpy(f.branch, sizeof f.branch, it->branch);
@@ -2108,6 +2379,14 @@ static void act(int a) {
 		break;
 	case SC_UPDATING:
 		if (a == A_BACK) up.cancel = 1;
+		break;
+	case SC_REPORTS:
+		if (a == A_OK && rp.phase != RP_SENDING) rp_start();
+		else if (a == A_SELECT && rp.phase != RP_SENDING) { rp_conf_load(); rp_scan(); rp.phase = RP_IDLE; rp.msg[0] = 0; }
+		else if (a == A_BACK) {
+			if (rp.phase == RP_SENDING) { job_cancel(&rp.job); rp.phase = RP_IDLE; rp.started = 0; rp.msg[0] = 0; }
+			screen = SC_LIST;
+		}
 		break;
 	case SC_SYSINFO: {
 		int rows = 12, mx = si_n > rows ? si_n - rows : 0;
@@ -2353,7 +2632,7 @@ static void draw_list(void) {
 	char right[40], title[300];
 	if (cur.kind == K_REPO) {
 		snprintf(title, sizeof title, "%s", g_user);
-		snprintf(right, sizeof right, "%d repos", nitems > 0 && items[0].kind == K_UPD ? nitems - 1 : nitems);
+		snprintf(right, sizeof right, "%d repos", nitems - (nitems > 0 && items[0].kind == K_UPD) - (nitems > 1 && items[1].kind == K_RPT));
 	} else if (cur.kind == FK_REL) {
 		const char *r = strchr(cur.repo, '/');
 		snprintf(title, sizeof title, "%s releases", r ? r + 1 : cur.repo);
@@ -2514,6 +2793,25 @@ static void draw_screen(uint32_t now) {
 		else footer("SEL check again  B back");
 		break;
 	}
+	case SC_REPORTS: {
+		header("Send reports", rp.repo);
+		snprintf(buf, sizeof buf, "Waiting: %d report%s + a status report", rp.n, rp.n == 1 ? "" : "s");
+		text_fit(32, 70, buf, C_FG, 2, VW - 64);
+		text_wrap(32, 100, "Each is posted as a new issue in the repo shown at the top.", C_MUTED, 2, VW - 64, 2);
+		if (rp.token[0]) text(32, 160, "Token: set", C_GOOD, 2);
+		else {
+			text(32, 160, "Token: missing", C_BAD, 2);
+			text_wrap(32, 192, "Open gitroms/data/upload.conf on the SD card, paste a GitHub token after token= and save. Then press SELECT.", C_MUTED, 2, VW - 64, 5);
+		}
+		if (rp.phase == RP_SENDING) {
+			snprintf(buf, sizeof buf, "Sending %d of %d...", rp.i + 1 > rp.n + 1 ? rp.n + 1 : rp.i + 1, rp.n + 1);
+			text_fit(32, 300, buf, C_SIGNAL, 2, VW - 64);
+			progress(32, 332, VW - 64, -1, now);
+		} else if (rp.msg[0]) text_wrap(32, 300, rp.msg, rp.sent && rp.phase == RP_DONE && strncmp(rp.msg, "Sent", 4) ? C_BAD : rp.phase == RP_DONE && !strncmp(rp.msg, "Sent", 4) ? C_GOOD : C_BAD, 2, VW - 64, 4);
+		if (rp.url[0] && rp.phase == RP_DONE) text_fit(32, 372, rp.url, C_MUTED, 2, VW - 64);
+		footer(rp.phase == RP_SENDING ? "Sending...  B cancel" : rp.token[0] ? "A send  SEL reload settings  B back" : "SEL reload settings  B back");
+		break;
+	}
 	case SC_UPDATING: {
 		header("Updating", NULL);
 		Comp *c = &comp[up.ci < 0 ? 0 : up.ci];
@@ -2588,7 +2886,7 @@ static void test_step(uint32_t now) {
 	if (tstep >= ntsteps) { g_run = 0; return; }
 	char *st = tsteps[tstep];
 	if (!strcmp(st, "idle")) {
-		if (!task_active() && up.phase == UPH_NONE) { tstep++; twait_until = now + 200; }
+		if (!task_active() && up.phase == UPH_NONE && rp.phase != RP_SENDING) { tstep++; twait_until = now + 200; }
 		return;
 	}
 	tstep++;
@@ -2600,7 +2898,9 @@ static void test_step(uint32_t now) {
 	else if (!strncmp(st, "pd=", 3)) input_press(act_from_name(st + 3), SRC_PAD, now, 0);
 	else if (!strncmp(st, "pu=", 3)) input_release(act_from_name(st + 3), SRC_PAD);
 	else if (!strcmp(st, "logsel")) logf_("sel=%d", have_cur ? cur.sel : -1);
+	else if (!strcmp(st, "rpopen")) rp_open();
 	else if (!strcmp(st, "logscr")) logf_("scr=%d sp=%d", screen, sp);
+	else if (!strcmp(st, "logrp")) logf_("rp phase=%d n=%d sent=%d token=%d repo=%s msg=%s", rp.phase, rp.n, rp.sent, rp.token[0] ? 1 : 0, rp.repo, rp.msg);
 	else if (!strcmp(st, "logupd")) {
 		for (int i = 0; i < ncomp; i++) logf_("upd[%d] %s st=%d nneed=%d date=[%s] msg=%s", i, comp[i].name, comp[i].status, comp[i].nneed, comp[i].pretty, comp[i].msg);
 	}
@@ -2771,6 +3071,7 @@ int main(void) {
 		}
 		input_tick(t0);
 		up_step(t0);
+		rp_step();
 		update_task(t0);
 		si_poll();
 		test_step(t0);

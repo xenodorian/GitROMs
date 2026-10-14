@@ -38,8 +38,9 @@ with zipfile.ZipFile(ZIP) as z:
         if n.endswith((".sh", ".gptk", ".json", ".md", ".txt", ".conf")):
             check(b"\r" not in d, f"LF line endings: {n}")
     low = allbytes.lower()
-    for bad in [b"chromium", b"firefox", b"webkit", b"github_pat_", b"ghp_", b"authorization: bearer"]:
+    for bad in [b"chromium", b"firefox", b"webkit", b"github_pat_", b"ghp_"]:
         check(bad not in low, f"package does not contain {bad.decode()!r}")
+    check(b"authorization: bearer %s" in low and low.count(b"authorization: bearer") <= 2, "the only auth header is built from the user's upload.conf token")
     tmp = tempfile.mkdtemp(prefix="gitroms-check-")
     z.extractall(tmp)
 
