@@ -85,7 +85,7 @@ int SDL_PushEvent(SDL_Event *);
 #define MAXITEMS 1500
 #define ROWS 12
 #define ROWH 30
-#define VERSION "4.0"
+#define VERSION "4.1"
 
 static uint32_t fb[VW * VH];
 
@@ -2397,7 +2397,7 @@ static void act(int a) {
 		if (a == A_OK || a == A_BACK) screen = SC_LIST;
 		break;
 	case SC_ERROR:
-		if (err_fatal) { if (a == A_OK || a == A_BACK) g_run = 0; break; }
+		if (err_fatal) { if (a == A_OK || a == A_BACK) { logf_("exit: quit from the error screen (%s)", err_text); g_run = 0; } break; }
 		if (a == A_OK) { if (have_cur) screen = SC_LIST; else load_root(); }
 		else if (a == A_BACK) { if (have_cur) screen = SC_LIST; else screen = SC_EXIT; }
 		else if (a == A_INFO) { up_from = SC_ERROR; updates_open(); }   /* updates do not need the GitHub API */
@@ -2413,7 +2413,7 @@ static void act(int a) {
 		else if (a == A_DOWN && comp_sel < ncomp - 1) comp_sel++;
 		else if (a == A_OK) {
 			if (up.phase == UPH_NONE && up_available()) up_start_update();
-			else if (up.phase == UPH_NONE && up.restart_needed) g_run = 0;
+			else if (up.phase == UPH_NONE && up.restart_needed) { logf_("exit: quit after GitROMs updated itself"); g_run = 0; }
 		} else if (a == A_SELECT) up_start_check(NULL);
 		else if (a == A_BACK) { if (up.phase != UPH_NONE) up.cancel = 1; screen = up_from; }
 		break;
@@ -2439,7 +2439,7 @@ static void act(int a) {
 		break;
 	}
 	case SC_EXIT:
-		if (a == A_OK) g_run = 0;
+		if (a == A_OK) { logf_("exit: confirmed on the Exit screen"); g_run = 0; }
 		else if (a == A_BACK) screen = have_cur ? SC_LIST : SC_ERROR;
 		break;
 	}
@@ -2970,7 +2970,8 @@ static void test_step(uint32_t now) {
 }
 
 /* ----------------------------------------------------------------- main */
-static void on_term(int s) { (void)s; g_run = 0; }
+static volatile sig_atomic_t g_sig;
+static void on_term(int s) { g_sig = s; g_run = 0; }          /* logged after the loop: logging is not safe here */
 
 static void load_conf(const char *path) {
 	char *s = read_file(path, 8192, NULL);
@@ -3192,7 +3193,7 @@ int main(void) {
 		uint32_t t0 = SDL_GetTicks();
 		SDL_Event ev;
 		while (SDL_PollEvent(&ev)) {
-			if (ev.type == SDL_QUIT) g_run = 0;
+			if (ev.type == SDL_QUIT) { logf_("exit: window close event (SDL_QUIT)"); g_run = 0; }
 			else if (ev.type == SDL_KEYDOWN || ev.type == SDL_KEYUP) {
 				int32_t scan;
 				memcpy(&scan, (uint8_t *)&ev + 16, 4);
@@ -3252,6 +3253,7 @@ int main(void) {
 		if (task.type == T_DL) remove(dl.part);
 	}
 	dg_clean();
+	if (g_sig) logf_("exit: received signal %d", (int)g_sig);
 	logf_("exit");
 	SDL_DestroyTexture(tex);
 	SDL_DestroyRenderer(ren);

@@ -62,4 +62,10 @@ curl -s --noproxy '*' "http://127.0.0.1:$PORT/__reset" >/dev/null
 rc=$(run "idle;rpopen;act=confirm;idle;idle")
 chk "gitroms-crash and gitroms-unclean reports are posted with those kinds in the title" "posts | python3 -c 'import sys,json;t=[p[\"title\"] for p in json.load(sys.stdin)];raise SystemExit(0 if any(x.startswith(\"[gitroms-crash]\") for x in t) and any(x.startswith(\"[gitroms-unclean]\") for x in t) else 1)'"
 chk "the status report includes the previous GitROMs log" "posts | python3 -c 'import sys,json;b=[p for p in json.load(sys.stdin) if p[\"title\"].startswith(\"[status]\")][0][\"body\"];raise SystemExit(0 if \"gitroms.prev.log\" in b else 1)'"
+# 5. why did it exit? a quit is always logged with its cause (exit code 0 alone says nothing)
+GITROMS_HOME="$H" GITROMS_PORTS="$PORTS" GITROMS_ROMS="$T/roms" GITROMS_TEST="idle;wait=30" "$BIN" >/dev/null 2>&1 &
+APP=$!; sleep 2; kill -TERM $APP; wait $APP 2>/dev/null; rc=$?
+chk "SIGTERM is a clean exit (0) and the log names the signal" "[ $rc = 0 ] && grep -q 'exit: received signal 15' \"$H/gitroms.log\""
+rc=$(run "idle;act=cancel;act=confirm")
+chk "quitting from the Exit screen is logged with its cause" "grep -q 'exit: confirmed on the Exit screen' \"$H/gitroms.log\""
 exit $fail
