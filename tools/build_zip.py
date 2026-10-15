@@ -46,6 +46,12 @@ def main():
     digest = hashlib.sha256(open(OUT, "rb").read()).hexdigest()
     with open(OUT + ".sha256", "w") as f:
         f.write(f"{digest}  GitROMs.zip\n")
+    for arch in BINARIES:                    # the same program files on their own: GitROMs.sh repairs a damaged copy from these
+        data = open(os.path.join(BUILD, f"gitroms.{arch}"), "rb").read()
+        with open(os.path.join(DIST, f"gitroms.{arch}"), "wb") as f:
+            f.write(data)
+        with open(os.path.join(DIST, f"gitroms.{arch}.sha256"), "w") as f:
+            f.write(f"{hashlib.sha256(data).hexdigest()}  gitroms.{arch}\n")
     print(f"wrote {OUT} ({os.path.getsize(OUT)} bytes) sha256 {digest}")
 
 

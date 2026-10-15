@@ -71,9 +71,34 @@ case "$RAW" in
 esac
 
 BIN="$GAMEDIR/gitroms.$ARCH"
-if [ ! -f "$BIN" ]; then
-  say "GitROMs: no program for this CPU ($RAW). Looked for gitroms.$ARCH in gitroms/."
-  sleep 8; finish; exit 1
+
+# A program file that is empty or not a program (a write that never reached the card) would "run" and exit with 0, silently.
+# Check it, and if it is damaged or missing, fetch a fresh copy from GitHub and verify it before it replaces anything.
+elf_ok() { [ -s "$1" ] && [ "$(head -c 4 "$1" 2>/dev/null | tail -c 3)" = "ELF" ]; }
+REPAIR_BASE="${GITROMS_REPAIR_BASE:-https://github.com/xenodorian/GitROMs/raw/main/dist}"
+sha_ok() {
+  command -v sha256sum >/dev/null 2>&1 || return 0
+  want="$(curl -fsSL --max-time 30 "$REPAIR_BASE/gitroms.$ARCH.sha256" 2>/dev/null | cut -d' ' -f1)"
+  have="$(sha256sum "$1" | cut -d' ' -f1)"
+  [ -n "$want" ] && [ "$want" = "$have" ]
+}
+if ! elf_ok "$BIN"; then
+  echo "program file missing or damaged: $BIN ($(wc -c < "$BIN" 2>/dev/null || echo 0) bytes)"
+  say "GitROMs: its program file is damaged. Repairing it from GitHub..."
+  rm -f "$BIN.part"
+  if curl -fsSL --max-time 120 -o "$BIN.part" "$REPAIR_BASE/gitroms.$ARCH" \
+     && elf_ok "$BIN.part" && [ "$(wc -c < "$BIN.part")" -ge "${GITROMS_REPAIR_MIN:-50000}" ] && sha_ok "$BIN.part"; then
+    sync
+    chmod +x "$BIN.part" 2>/dev/null
+    mv -f "$BIN.part" "$BIN"
+    sync
+    echo "repaired $BIN"
+  else
+    rm -f "$BIN.part"
+    echo "repair failed"
+    say "GitROMs could not repair its program file (is Wi-Fi on?). Copy gitroms/gitroms.$ARCH from GitROMs.zip, then eject the card properly."
+    sleep 8; finish; exit 1
+  fi
 fi
 [ -d "$GAMEDIR/libs.$ARCH" ] && export LD_LIBRARY_PATH="$GAMEDIR/libs.$ARCH:$LD_LIBRARY_PATH"
 

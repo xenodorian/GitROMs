@@ -85,7 +85,7 @@ int SDL_PushEvent(SDL_Event *);
 #define MAXITEMS 1500
 #define ROWS 12
 #define ROWH 30
-#define VERSION "4.1"
+#define VERSION "4.2"
 
 static uint32_t fb[VW * VH];
 
@@ -211,6 +211,58 @@ static char *read_file(const char *p, size_t max, size_t *outn) {
 	buf[n] = 0;
 	if (outn) *outn = n;
 	return buf;
+}
+
+/* ---- durable writes ----
+ * A file that was written and renamed but never flushed can come back empty, or full of old data, after a power cut or after the card
+ * is pulled: the size is saved, the contents are not. So a new file is flushed to the card, dropped from memory, read back from the
+ * card and checked BEFORE it replaces the good copy; the folder entry is flushed after. */
+static int dur_flush(const char *path) {
+	int fd = open(path, O_RDONLY);
+	if (fd < 0) return -1;
+	int r = fsync(fd);
+	if (r == 0) posix_fadvise(fd, 0, 0, POSIX_FADV_DONTNEED);          /* the next read comes from the card, not from memory */
+	close(fd);
+	return r;
+}
+
+static void dur_dir(const char *path) {
+	char d[920];
+	scpy(d, sizeof d, path);
+	char *sl = strrchr(d, '/');
+	if (!sl) return;
+	*sl = 0;
+	int fd = open(d[0] ? d : "/", O_RDONLY);
+	if (fd < 0) return;
+	fsync(fd);
+	close(fd);
+}
+
+static int dur_crc(const char *path, long long *size, uint32_t *crc) {
+	int fd = open(path, O_RDONLY);
+	if (fd < 0) return -1;
+	static uint8_t buf[65536];
+	uint32_t c = 0;
+	long long n = 0;
+	ssize_t r;
+	while ((r = read(fd, buf, sizeof buf)) > 0) { c = zx_crc32(c, buf, (size_t)r); n += r; }
+	close(fd);
+	if (r < 0) return -1;
+	*size = n;
+	*crc = c;
+	return 0;
+}
+
+/* NULL when the file on the card is exactly right. want_known: compare with `want`; otherwise a read before and after the flush must agree. */
+static const char *dur_check(const char *path, int want_known, uint32_t want, long long want_size, uint32_t *out_crc) {
+	long long s1 = 0, s2 = 0;
+	uint32_t c1 = 0, c2 = 0;
+	if (!want_known && dur_crc(path, &s1, &c1)) return "Could not read the new file back.";
+	if (dur_flush(path)) return "The card did not accept the write.";
+	if (dur_crc(path, &s2, &c2)) return "Could not read the new file back.";
+	if (want_known ? (c2 != want || (want_size >= 0 && s2 != want_size)) : (c1 != c2 || s1 != s2)) return "The new file did not save correctly (card problem). The old one was kept.";
+	if (out_crc) *out_crc = c2;
+	return NULL;
 }
 
 static void human(char *out, size_t n, long long v) {
@@ -671,8 +723,10 @@ static void inst_record(const Inst *n) {
 	if (!f) return;
 	for (int i = 0; i < ninst; i++)
 		fprintf(f, "%s\t%s\t%s\t%s\t%s\n", inst[i].repo, inst[i].remote, inst[i].token, inst[i].sys, inst[i].name);
+	fflush(f);
+	fsync(fileno(f));
 	fclose(f);
-	rename(tmp, g_instpath);
+	if (rename(tmp, g_instpath) == 0) dur_dir(g_instpath);
 }
 
 static struct {
@@ -1096,8 +1150,10 @@ static void finish_download(void) {
 		long long sz = file_size(dl.part);
 		if (sz == 0) { snprintf(msg, sizeof msg, "The downloaded file was empty."); remove(dl.part); }
 		else if (!dl.replace && path_exists(dl.final)) { snprintf(msg, sizeof msg, "A file with that name appeared. Not overwritten."); remove(dl.part); }
+		else if (dur_check(dl.part, 0, 0, -1, NULL)) { snprintf(msg, sizeof msg, "The file did not save correctly (card problem). Nothing was replaced."); remove(dl.part); }
 		else if (rename(dl.part, dl.final) != 0) { snprintf(msg, sizeof msg, "Could not save file: %s", strerror(errno)); remove(dl.part); }
 		else {
+			dur_dir(dl.final);
 			char h[32];
 			human(h, sizeof h, sz);
 			snprintf(msg, sizeof msg, "%s %s (%s) in %s.", dl.replace && dl.existed ? "Updated" : "Saved", dl.name, h, dl.sys);
@@ -1253,6 +1309,8 @@ typedef struct {
 	unsigned char *need;
 	int nneed, nlocal;
 	long long need_c, need_u;
+	uint32_t lcrc;           /* CRC32 of a single file as installed: a later change (damage, a cut-off copy) is noticed */
+	int has_lcrc;
 } Comp;
 
 static Comp comp[MAXCOMP];
@@ -1311,10 +1369,13 @@ static void state_save(void) {
 		if (!comp[i].rec[0]) continue;
 		fprintf(f, "%s\t%s", comp[i].name, comp[i].rec);
 		for (int k = 0; k < comp[i].nsent; k++) fprintf(f, "\t%s", comp[i].sent[k]);
+		if (comp[i].kind == 1 && comp[i].has_lcrc) fprintf(f, "\tcrc:%08x", comp[i].lcrc);
 		fputc('\n', f);
 	}
+	fflush(f);
+	fsync(fileno(f));
 	fclose(f);
-	rename(tmp, g_statepath);
+	if (rename(tmp, g_statepath) == 0) dur_dir(g_statepath);
 }
 
 static void state_load(void) {
@@ -1336,7 +1397,11 @@ static void state_load(void) {
 			if (!strcmp(comp[i].name, f[0])) {
 				scpy(comp[i].rec, sizeof comp[i].rec, f[1]);
 				comp[i].nsent = 0;
-				for (int j = 2; j < k && comp[i].nsent < 3; j++) scpy(comp[i].sent[comp[i].nsent++], sizeof comp[i].sent[0], f[j]);
+				comp[i].has_lcrc = 0;
+				for (int j = 2; j < k && comp[i].nsent < 3; j++) {
+					if (!strncmp(f[j], "crc:", 4)) { comp[i].lcrc = (uint32_t)strtoul(f[j] + 4, NULL, 16); comp[i].has_lcrc = 1; }
+					else scpy(comp[i].sent[comp[i].nsent++], sizeof comp[i].sent[0], f[j]);
+				}
 			}
 	}
 	free(buf);
@@ -1717,6 +1782,16 @@ static void up_after_stamp(Comp *c) {
 				return;
 			}
 		}
+		if (c->has_lcrc) {                                        /* same size, but is it still the file that was installed? */
+			long long ls = 0;
+			uint32_t lc = 0;
+			if (dur_crc(path, &ls, &lc) != 0 || lc != c->lcrc) {
+				scpy(m, sizeof m, "Damaged: the file no longer matches what was installed");
+				up_mod_msg(c, m, c->msg, sizeof c->msg);
+				up_finish_comp(c, CS_UPDATE, c->msg);
+				return;
+			}
+		}
 		if (up_fast_ok(c)) { up_mod_msg(c, "Up to date", m, sizeof m); up_finish_comp(c, CS_OK, m); return; }
 		if (!strncmp(c->src, "commit:", 7) && c->stamp[0] && c->rec[0] && stamp_is_commit_date(c->stamp) != stamp_is_commit_date(c->rec) && file_size(path) == c->total) {
 			/* the two stamps are different kinds (one lookup failed): they cannot be compared, so a recorded install of the server's exact size stands */
@@ -1823,10 +1898,13 @@ static const char *up_extract_entry(Comp *c, const ZxEnt *e) {
 		if (!w) err = "Could not write to the ports folder.";
 		else {
 			if (e->usize && fwrite(out, 1, e->usize, w) != e->usize) err = "Could not write (card full?).";
+			if (!err && (fflush(w) != 0 || fsync(fileno(w)) != 0)) err = "Could not write (card full?).";
 			if (fclose(w) != 0 && !err) err = "Could not write (card full?).";
+			if (!err) err = dur_check(part, 1, e->crc, (long long)e->usize, NULL);        /* read back from the card before it replaces the old file */
 			if (!err) {
 				chmod(part, (e->mode ? e->mode : 0644) | 0600);
 				if (rename(part, path) != 0) err = "Could not replace a file.";
+				else dur_dir(path);
 			}
 			if (err) remove(part);
 		}
@@ -1853,6 +1931,7 @@ static void up_extract_step(Comp *c) {
 	snprintf(m, sizeof m, "Updated %d files", c->nneed);
 	up.updated[up.ci] = 1;
 	if (c->self) up.restart_needed = 1;
+	sync();                                                   /* everything of this update is on the card before it is called done */
 	comp_record(c);
 	comp_runtime_free(c);
 	up_finish_comp(c, CS_OK, m);
@@ -1889,8 +1968,14 @@ static void up_step(uint32_t now) {
 		if (!job_poll(&up.job)) return;
 		if (up.job.rc != 0) { remove(part); up_fail_job(c); return; }
 		if (c->total > 0 && file_size(part) != c->total) { remove(part); up_fail(c, "The download was incomplete."); return; }
+		uint32_t fcrc = 0;
+		const char *derr = dur_check(part, 0, 0, -1, &fcrc);
+		if (derr) { remove(part); logf_("update %s: %s", c->name, derr); up_fail(c, derr); return; }
 		chmod(part, 0644);
 		if (rename(part, path) != 0) { remove(part); up_fail(c, "Could not replace the file."); return; }
+		dur_dir(path);
+		c->lcrc = fcrc;
+		c->has_lcrc = 1;
 		up.updated[up.ci] = 1;
 		comp_record(c);
 		up_finish_comp(c, CS_OK, "Updated");
@@ -3252,6 +3337,7 @@ int main(void) {
 		job_cancel(&task.job);
 		if (task.type == T_DL) remove(dl.part);
 	}
+	sync();
 	dg_clean();
 	if (g_sig) logf_("exit: received signal %d", (int)g_sig);
 	logf_("exit");

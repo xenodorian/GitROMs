@@ -116,3 +116,11 @@ Why: the updater died at start on the device with no trace, because gitroms.log 
 - Logs: gitroms.log is rotated to gitroms.prev.log instead of truncated; launch.log to launch.prev.log.
 - Clean-up at start (nothing is running yet): tmp files, *.gitroms-part under the ports folder (4 levels) and <roms>/gba (1 level), old reports beyond 8 of each kind. Writable check and free space are logged and shown on the Updates screen when bad.
 - Not done: staging a bundle in a separate folder and swapping it in. A half-updated bundle already heals on the next check because every file is compared by size and CRC.
+
+## Durable writes and self-repair (2026-10-15, versions 4.1 and 4.2)
+Evidence: files recently written on the device were empty or junk (gitroms.aarch64 0 bytes, sgba/sgba 1.4 MB of non-ELF data, two bundled demo games 0 bytes), while files the update did not touch were intact. An empty executable "runs" under bash and exits 0, so the launch looked like a silent crash. Likely cause (not proven): file contents never reached the card before power was cut or the card was pulled; the old code renamed without flushing.
+- Every replace is now: write to .gitroms-part, fsync, drop from the page cache, read back from the card, compare (CRC from the package; single files: two reads that must agree), then rename and fsync the folder. A failed check keeps the old file and reports "did not save correctly (card problem)". sync() runs when an update finishes and at exit.
+- Single files record a CRC32 at install (updates.txt field crc:XXXXXXXX). A later mismatch with the same size reads "Damaged", and the update rewrites it.
+- GitROMs.sh checks its program (non-empty, ELF magic) and repairs from dist/gitroms.<arch> after a SHA-256 match (dist/gitroms.<arch>.sha256, built by tools/build_zip.py). Overridable with GITROMS_REPAIR_BASE for tests.
+- Cost: a 16 MB single file is read twice and flushed, a few seconds with the screen not redrawing at the very end. Accepted.
+- Still open: SGBA.sh and the game launchers (SGBA repo) do not yet refuse an empty or non-ELF sgba; they live in the SGBA repo.

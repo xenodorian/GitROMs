@@ -160,5 +160,24 @@ COMPS="$T/commit.conf" app "$OPEN;logupd"
 chk "a truncated single file is reported as incomplete" "st 0 | grep -q 'st=3' && grep -q 'Incomplete or damaged' \"$LOG\""
 COMPS="$T/commit.conf" app "$OPEN;act=confirm;idle;logupd"
 chk "and the update puts the whole file back" "st 0 | grep -q 'st=2' && [ \"\$(wc -c < \"$PORTS/sgba/games/cm.sgba\")\" -gt 100 ]"
+# 7. same size but different content (damage, a block of old data): noticed through the CRC recorded at install, and repaired
+python3 - "$PORTS/sgba/games/cm.sgba" <<'PY'
+import sys
+p=sys.argv[1]; d=bytearray(open(p,'rb').read()); d[len(d)//2]^=0xFF; open(p,'wb').write(d)
+PY
+COMPS="$T/commit.conf" app "$OPEN;logupd"
+chk "a same-size damaged single file is reported as damaged" "st 0 | grep -q 'st=3' && grep -q 'Damaged' \"$LOG\""
+COMPS="$T/commit.conf" app "$OPEN;act=confirm;idle;logupd"
+chk "and the update replaces it with the right bytes" "st 0 | grep -q 'st=2'"
+COMPS="$T/commit.conf" app "$OPEN;logupd"
+chk "the record has a checksum for the installed file" "grep -q 'crc:[0-9a-f]\{8\}' \"$PORTS/gitroms/data/updates.txt\""
+chk "and the repaired file now checks out as up to date" "st 0 | grep -q 'st=2'"
+# 8. an empty program file (what a lost write leaves) in a bundle is found by size and CRC and rewritten
+COMPS="" app "$OPEN;act=confirm;idle;logupd"
+: > "$PORTS/sgba/lib/mod020.py"
+app "$OPEN;logupd"
+chk "bundle: an emptied file is found by the check" "st 0 | grep -q 'st=3 nneed=1'"
+app "$OPEN;act=confirm;idle;logupd"
+chk "bundle: and rewritten, read back and verified" "[ -s \"$PORTS/sgba/lib/mod020.py\" ] && st 0 | grep -q 'st=2'"
 chk "no fatal errors" "! grep -q FATAL \"$LOG\""
 exit $fail
