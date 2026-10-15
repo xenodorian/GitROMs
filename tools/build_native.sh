@@ -18,7 +18,8 @@ STUB="$OUT/sdlstub.c"
     while read -r f; do echo "void *$f(void) { return 0; }"; done
 } > "$STUB"
 
-CFLAGS="-std=gnu99 -O2 -Wall -Wextra -Wno-format-truncation -fno-stack-protector -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -s"
+SRCHASH="h$(cat "$ROOT"/native/*.c "$ROOT"/native/*.h | sha1sum | cut -c1-8)"    # names the exact source in a crash report
+CFLAGS="-std=gnu99 -O2 -Wall -Wextra -Wno-format-truncation -fno-stack-protector -fno-omit-frame-pointer -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -DGITROMS_SRCHASH=$SRCHASH -s"
 
 build() { # name cc [sysroot multiarch-dir]
   local name="$1" cc="$2" sr="${3:-}" ma="${4:-}"

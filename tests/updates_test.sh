@@ -154,5 +154,11 @@ COMPS="$T/commit.conf" app "$OPEN;logupd"
 chk "a recorded commit date and a failed lookup (header stamp): same size file stands as up to date" "st 0 | grep -q 'st=2'"
 COMPS="$T/commit.conf" app "$OPEN;logupd"
 chk "and it stays up to date on the next check" "st 0 | grep -q 'st=2'"
+# 6. a cut-off copy (an interrupted or damaged write) has the wrong size: offered as an update whatever the stamps say, and repaired
+head -c 100 "$PORTS/sgba/games/cm.sgba" > "$PORTS/sgba/games/cm.cut" && mv "$PORTS/sgba/games/cm.cut" "$PORTS/sgba/games/cm.sgba"
+COMPS="$T/commit.conf" app "$OPEN;logupd"
+chk "a truncated single file is reported as incomplete" "st 0 | grep -q 'st=3' && grep -q 'Incomplete or damaged' \"$LOG\""
+COMPS="$T/commit.conf" app "$OPEN;act=confirm;idle;logupd"
+chk "and the update puts the whole file back" "st 0 | grep -q 'st=2' && [ \"\$(wc -c < \"$PORTS/sgba/games/cm.sgba\")\" -gt 100 ]"
 chk "no fatal errors" "! grep -q FATAL \"$LOG\""
 exit $fail

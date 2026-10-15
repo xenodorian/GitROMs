@@ -5,6 +5,9 @@
  * SDL2 is declared here by hand (no SDL headers needed to build) and the real
  * libSDL2-2.0.so.0 on the device is loaded at run time, same as the CryMon port.
  */
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE   /* register names in the crash handler */
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -82,7 +85,7 @@ int SDL_PushEvent(SDL_Event *);
 #define MAXITEMS 1500
 #define ROWS 12
 #define ROWH 30
-#define VERSION "3.9"
+#define VERSION "4.0"
 
 static uint32_t fb[VW * VH];
 
@@ -122,19 +125,22 @@ static char g_romroot[300] = "";
 static char g_tmp[420];
 static char g_logpath[440], g_histpath[440];
 static int g_run = 1;
+static char g_card_note[120];                       /* set at start when the card is read-only or nearly full */
+#include "diag.h"
 
 static void logf_(const char *fmt, ...) {
-	FILE *f = fopen(g_logpath, "ab");
-	if (!f) return;
 	time_t t = time(NULL);
-	char ts[32];
+	char ts[32], msg[512], line[DG_W];
 	strftime(ts, sizeof ts, "%Y-%m-%d %H:%M:%S ", localtime(&t));
-	fputs(ts, f);
 	va_list ap;
 	va_start(ap, fmt);
-	vfprintf(f, fmt, ap);
+	vsnprintf(msg, sizeof msg, fmt, ap);
 	va_end(ap);
-	fputc('\n', f);
+	snprintf(line, sizeof line, "%s%s", ts, msg);
+	dg_ring_add(line);                                        /* the crash report carries the last lines */
+	FILE *f = fopen(g_logpath, "ab");
+	if (!f) return;
+	fprintf(f, "%s%s\n", ts, msg);
 	fclose(f);
 }
 
@@ -1699,6 +1705,18 @@ static void up_after_stamp(Comp *c) {
 		comp_path(c, "", path, sizeof path);
 		c->need_c = c->total;
 		if (!path_exists(path)) { snprintf(m, sizeof m, "Not installed (%s)", h); up_finish_comp(c, CS_NEW, m); return; }
+		{                                                         /* a cut-off or damaged copy has the wrong size whatever the stamps say */
+			long long have = file_size(path);
+			if (c->total > 0 && have != c->total) {
+				char hb[32], sb[32];
+				human(hb, sizeof hb, have);
+				human(sb, sizeof sb, c->total);
+				snprintf(m, sizeof m, "Incomplete or damaged (%s here, %s on the server)", hb, sb);
+				up_mod_msg(c, m, c->msg, sizeof c->msg);
+				up_finish_comp(c, CS_UPDATE, c->msg);
+				return;
+			}
+		}
 		if (up_fast_ok(c)) { up_mod_msg(c, "Up to date", m, sizeof m); up_finish_comp(c, CS_OK, m); return; }
 		if (!strncmp(c->src, "commit:", 7) && c->stamp[0] && c->rec[0] && stamp_is_commit_date(c->stamp) != stamp_is_commit_date(c->rec) && file_size(path) == c->total) {
 			/* the two stamps are different kinds (one lookup failed): they cannot be compared, so a recorded install of the server's exact size stands */
@@ -2109,6 +2127,7 @@ static int rp_build(int idx, char *title, size_t tn) {
 		char p[540], kind[32] = "report";
 		snprintf(p, sizeof p, "%s/%s", rp.dir, rp.file[idx]);
 		const char *dash = strchr(rp.file[idx], '-');
+		if (dash && !strncmp(rp.file[idx], "gitroms-", 8)) dash = strchr(dash + 1, '-');   /* "gitroms-crash-123.txt" is kind "gitroms-crash" */
 		if (dash && (size_t)(dash - rp.file[idx]) < sizeof kind) { memcpy(kind, rp.file[idx], (size_t)(dash - rp.file[idx])); kind[dash - rp.file[idx]] = 0; }
 		long long sz = file_size(p);
 		char *body = read_file(p, 56000, NULL);
@@ -2124,6 +2143,12 @@ static int rp_build(int idx, char *title, size_t tn) {
 		snprintf(p, sizeof p, "%s/sgba/sgba.log", g_ports);
 		rp_tail(o, p, 60, "sgba/sgba.log");
 		rp_tail(o, g_logpath, 80, "gitroms.log");
+		snprintf(p, sizeof p, "%s/gitroms.prev.log", g_home);
+		rp_tail(o, p, 40, "gitroms.prev.log (the run before)");
+		snprintf(p, sizeof p, "%s/launch.log", g_home);
+		rp_tail(o, p, 25, "launch.log");
+		snprintf(p, sizeof p, "%s/launch.prev.log", g_home);
+		rp_tail(o, p, 25, "launch.prev.log (the launch before)");
 		rp_tail(o, g_statepath, 20, "updates.txt");
 		snprintf(title, tn, "[status] %s %s", host, when);
 	}
@@ -2801,6 +2826,7 @@ static void draw_screen(uint32_t now) {
 			const char *m = c->status == CS_CHECKING ? "Checking..." : c->status == CS_IDLE ? "Waiting..." : c->status == CS_UPDATING ? "Updating..." : c->msg;
 			text_fit(16, y + 30, m, col, 2, VW - 40);
 		}
+		if (g_card_note[0]) text_fit(16, 384, g_card_note, C_BAD, 2, VW - 32);
 		if (up.restart_needed) text_fit(16, 410, "GitROMs was updated. Quit and reopen it.", C_SIGNAL, 2, VW - 32);
 		if (up.phase != UPH_NONE) footer("Checking...  B back");
 		else if (up_available()) footer("A update  SEL check again  B back");
@@ -2912,6 +2938,7 @@ static void test_step(uint32_t now) {
 	else if (!strncmp(st, "ku=", 3)) input_release(act_from_name(st + 3), SRC_KEY);
 	else if (!strncmp(st, "pd=", 3)) input_press(act_from_name(st + 3), SRC_PAD, now, 0);
 	else if (!strncmp(st, "pu=", 3)) input_release(act_from_name(st + 3), SRC_PAD);
+	else if (!strcmp(st, "crash")) { logf_("test: crashing on purpose"); *(volatile int *)0 = 1; }
 	else if (!strcmp(st, "logsel")) logf_("sel=%d", have_cur ? cur.sel : -1);
 	else if (!strcmp(st, "rpopen")) rp_open();
 	else if (!strcmp(st, "logscr")) logf_("scr=%d sp=%d", screen, sp);
@@ -2963,6 +2990,95 @@ static void load_conf(const char *path) {
 	free(s);
 }
 
+/* ---- start-up housekeeping: what interrupted or repeated updates leave behind ---- */
+static void hk_parts(const char *dir, int depth, int *n, long long *bytes) {
+	DIR *d = opendir(dir);
+	if (!d) return;
+	struct dirent *e;
+	while ((e = readdir(d))) {
+		if (e->d_name[0] == '.' && (!e->d_name[1] || (e->d_name[1] == '.' && !e->d_name[2]))) continue;
+		char p[900];
+		snprintf(p, sizeof p, "%s/%s", dir, e->d_name);
+		size_t l = strlen(e->d_name);
+		if (l > 13 && !strcmp(e->d_name + l - 13, ".gitroms-part")) { *bytes += file_size(p); if (remove(p) == 0) (*n)++; }
+		else if (depth > 0 && is_dir(p)) hk_parts(p, depth - 1, n, bytes);
+	}
+	closedir(d);
+}
+
+static void hk_prune(const char *dir, const char *prefix, int keep) {
+	char names[64][96];
+	int n = 0;
+	DIR *d = opendir(dir);
+	if (!d) return;
+	struct dirent *e;
+	size_t pl = strlen(prefix);
+	while ((e = readdir(d)) && n < 64)
+		if (!strncmp(e->d_name, prefix, pl) && strlen(e->d_name) < sizeof names[0]) { memcpy(names[n], e->d_name, strlen(e->d_name) + 1); n++; }
+	closedir(d);
+	qsort(names, (size_t)n, sizeof names[0], rp_name_cmp);          /* newest first */
+	for (int i = keep; i < n; i++) { char p[560]; snprintf(p, sizeof p, "%s/%s", dir, names[i]); remove(p); }
+}
+
+/* The last run left its marker: it was killed, lost power or hung. Write a report from the marker and the log it left. */
+static void hk_unclean(const char *rdir, const char *marker, const char *prevlog) {
+	char *mk = read_file(marker, 4096, NULL);
+	if (!mk) return;
+	char when[32], path[560], host[64] = "device";
+	gethostname(host, sizeof host - 1);
+	time_t t = time(NULL);
+	strftime(when, sizeof when, "%Y%m%d-%H%M%S", localtime(&t));
+	snprintf(path, sizeof path, "%s/gitroms-unclean-%s.txt", rdir, when);
+	FILE *o = fopen(path, "wb");
+	if (o) {
+		fprintf(o, "GitROMs report: unclean\nversion now: %s\ntime: %s\ndevice: %s\n", VERSION, when, host);
+		fprintf(o, "The previous run did not exit cleanly (killed, power loss, hang, or a crash before the handler ran).\nlast marker:\n%s", mk);
+		rp_tail(o, prevlog, 40, "gitroms.prev.log");
+		fclose(o);
+	}
+	logf_("the previous run did not exit cleanly: %s", path);
+	free(mk);
+	remove(marker);
+}
+
+static void housekeeping(const char *rdir, const char *marker) {
+	char prevlog[460];
+	snprintf(prevlog, sizeof prevlog, "%s/gitroms.prev.log", g_home);
+	hk_unclean(rdir, marker, prevlog);
+	int n = 0;
+	long long bytes = 0;
+	DIR *d = opendir(g_tmp);                                       /* nothing is running yet: everything in tmp is left over */
+	if (d) {
+		struct dirent *e;
+		while ((e = readdir(d))) {
+			char p[900];
+			snprintf(p, sizeof p, "%s/%s", g_tmp, e->d_name);
+			if (is_dir(p)) continue;
+			bytes += file_size(p);
+			if (remove(p) == 0) n++;
+		}
+		closedir(d);
+	}
+	hk_parts(g_ports, 4, &n, &bytes);                              /* half-downloaded files next to their destination */
+	char gba[420];
+	snprintf(gba, sizeof gba, "%s/gba", g_romroot[0] ? g_romroot : g_ports);
+	hk_parts(gba, 0, &n, &bytes);
+	if (n) logf_("housekeeping: removed %d leftover temporary file%s (%lld KB)", n, n == 1 ? "" : "s", bytes / 1024);
+	hk_prune(rdir, "gitroms-crash-", 8);
+	hk_prune(rdir, "gitroms-unclean-", 8);
+	/* is the card writable, and is there room? A read-only or full card breaks every update and every launch. */
+	char probe[460];
+	snprintf(probe, sizeof probe, "%s/.writetest", g_home);
+	FILE *f = fopen(probe, "wb");
+	if (f) { fputc('x', f); fclose(f); remove(probe); }
+	struct statvfs sv;
+	long long freeb = statvfs(g_home, &sv) == 0 ? (long long)sv.f_bavail * (long long)sv.f_frsize : -1;
+	logf_("card: %s, %lld MB free", f ? "writable" : "READ-ONLY", freeb >= 0 ? freeb / 1048576 : -1);
+	g_card_note[0] = 0;
+	if (!f) snprintf(g_card_note, sizeof g_card_note, "The card is read-only: nothing can be saved.");
+	else if (freeb >= 0 && freeb < 30LL * 1048576) snprintf(g_card_note, sizeof g_card_note, "Card almost full: %lld MB free.", freeb / 1048576);
+}
+
 int main(void) {
 	const char *e;
 	signal(SIGPIPE, SIG_IGN);
@@ -2977,7 +3093,14 @@ int main(void) {
 	mkdir_p(g_tmp);
 	snprintf(resp_path, sizeof resp_path, "%s/resp.json", g_tmp);
 	snprintf(resp_err, sizeof resp_err, "%s/resp.err", g_tmp);
-	{ FILE *f = fopen(g_logpath, "wb"); if (f) fclose(f); }
+	{                                                              /* keep the run before: a crash is read after the next start */
+		char prev[460];
+		snprintf(prev, sizeof prev, "%s/gitroms.prev.log", g_home);
+		remove(prev);
+		rename(g_logpath, prev);
+		FILE *f = fopen(g_logpath, "wb");
+		if (f) fclose(f);
+	}
 	logf_("GitROMs %s start, home=%s", VERSION, g_home);
 
 	if ((e = getenv("GITROMS_CONF")) && *e) load_conf(e);
@@ -2997,6 +3120,15 @@ int main(void) {
 	snprintf(g_instpath, sizeof g_instpath, "%s/installed.txt", g_home);
 	snprintf(g_statepath, sizeof g_statepath, "%s/updates.txt", g_home);
 	inst_load();
+	{
+		char rdir[460], marker[460];
+		snprintf(rdir, sizeof rdir, "%s/sgba/reports", g_ports);        /* the folder [Send reports] already posts from */
+		snprintf(marker, sizeof marker, "%s/.running", g_home);
+		mkdir_p(rdir);
+		housekeeping(rdir, marker);
+		dg_install(rdir, marker);
+		dg_marker_set("starting");
+	}
 
 	SDL_SetHint("SDL_HINT_RENDER_SCALE_QUALITY", "0");
 	if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_JOYSTICK) != 0) {
@@ -3004,6 +3136,7 @@ int main(void) {
 		if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) != 0) {
 			logf_("SDL_Init failed: %s", SDL_GetError());
 			fprintf(stderr, "GitROMs: SDL_Init failed: %s\n", SDL_GetError());
+			dg_clean();
 			return 3;
 		}
 	}
@@ -3014,6 +3147,7 @@ int main(void) {
 		logf_("SDL_CreateWindow failed: %s", SDL_GetError());
 		fprintf(stderr, "GitROMs: window failed: %s\n", SDL_GetError());
 		SDL_Quit();
+		dg_clean();
 		return 3;
 	}
 	SDL_Renderer *ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED);
@@ -3023,6 +3157,7 @@ int main(void) {
 		logf_("SDL_CreateRenderer failed: %s", SDL_GetError());
 		fprintf(stderr, "GitROMs: renderer failed: %s\n", SDL_GetError());
 		SDL_Quit();
+		dg_clean();
 		return 3;
 	}
 	SDL_RenderSetLogicalSize(ren, VW, VH);
@@ -3030,6 +3165,7 @@ int main(void) {
 	if (!tex) {
 		logf_("SDL_CreateTexture failed: %s", SDL_GetError());
 		SDL_Quit();
+		dg_clean();
 		return 3;
 	}
 	SDL_ShowCursor(0);
@@ -3085,6 +3221,15 @@ int main(void) {
 			}
 		}
 		input_tick(t0);
+		{
+			char st[96];
+			dg_screen = screen; dg_phase = up.phase; dg_comp = up.ci;
+			if (up.phase != UPH_NONE && up.ci >= 0 && up.ci < ncomp) snprintf(st, sizeof st, "%s %s", up.mode == 1 ? "updating" : "checking", comp[up.ci].name);
+			else if (rp.phase == RP_SENDING) snprintf(st, sizeof st, "sending reports");
+			else if (task_active()) snprintf(st, sizeof st, "loading or downloading");
+			else snprintf(st, sizeof st, "idle");
+			dg_marker_set(st);
+		}
 		up_step(t0);
 		rp_step();
 		update_task(t0);
@@ -3106,6 +3251,7 @@ int main(void) {
 		job_cancel(&task.job);
 		if (task.type == T_DL) remove(dl.part);
 	}
+	dg_clean();
 	logf_("exit");
 	SDL_DestroyTexture(tex);
 	SDL_DestroyRenderer(ren);

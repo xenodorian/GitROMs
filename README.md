@@ -33,4 +33,11 @@ sysroot). Not yet run on a real R36S. See [docs/DECISIONS.md](docs/DECISIONS.md)
 
 ## Sending diagnostic reports
 The SGBA emulator saves crash, error and frame rate reports in `sgba/reports/`. Open `[Send reports]` at the top of the repo list to post them as issues in a GitHub repository.
+
+GitROMs reports on itself too, into the same folder, so the same button sends them:
+- `gitroms-crash-<time>.txt` after a crash: version, source hash, signal, fault address, what it was doing, registers, callers and the last log lines.
+- `gitroms-unclean-<time>.txt` when the last run was killed, lost power or hung (it leaves `gitroms/data/.running` while it runs).
+- `gitroms/data/gitroms.prev.log` and `launch.prev.log` keep the run before this one, so a crash can still be read after the next start. The status report includes them.
+
+At every start GitROMs also deletes what interrupted updates leave behind (temporary files and half-downloaded `.gitroms-part` files) and checks that the card is writable with room to spare; a warning shows on the Updates screen. A single-file item whose size differs from the server's (cut off or damaged) is offered as an update even when its dates match.
 First use: GitROMs creates `gitroms/data/upload.conf`. On a computer, set `repo=` and paste a fine-grained GitHub token (Issues: read and write on that repo) after `token=`, then press SELECT on the screen to reload. The default repo is public, so anything sent there is public.

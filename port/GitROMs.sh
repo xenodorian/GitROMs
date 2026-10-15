@@ -28,6 +28,7 @@ fi
 
 mkdir -p "$GAMEDIR/data"
 LOG="$GAMEDIR/data/launch.log"
+[ -s "$LOG" ] && mv -f "$LOG" "$GAMEDIR/data/launch.prev.log"   # keep the launch before this one
 : > "$LOG"
 exec > >(tee -a "$LOG") 2>&1
 
