@@ -82,7 +82,7 @@ int SDL_PushEvent(SDL_Event *);
 #define MAXITEMS 1500
 #define ROWS 12
 #define ROWH 30
-#define VERSION "3.8"
+#define VERSION "3.9"
 
 static uint32_t fb[VW * VH];
 
@@ -1656,6 +1656,10 @@ static uint8_t *read_range(const char *path, long long off, size_t len) {
 	return b;
 }
 
+/* A source dated by its last commit has a stamp like "2026-10-13T22:31:53Z". When the GitHub lookup fails (rate limit, offline) only
+ * the ETag or Last-Modified header is left, which can never equal a recorded commit date (or the other way round). */
+static int stamp_is_commit_date(const char *st) { return st[0] >= '0' && st[0] <= '9'; }
+
 static void comp_record(Comp *c) {
 	if (!c->stamp[0]) return;
 	scpy(c->rec, sizeof c->rec, c->stamp);
@@ -1696,6 +1700,14 @@ static void up_after_stamp(Comp *c) {
 		c->need_c = c->total;
 		if (!path_exists(path)) { snprintf(m, sizeof m, "Not installed (%s)", h); up_finish_comp(c, CS_NEW, m); return; }
 		if (up_fast_ok(c)) { up_mod_msg(c, "Up to date", m, sizeof m); up_finish_comp(c, CS_OK, m); return; }
+		if (!strncmp(c->src, "commit:", 7) && c->stamp[0] && c->rec[0] && stamp_is_commit_date(c->stamp) != stamp_is_commit_date(c->rec) && file_size(path) == c->total) {
+			/* the two stamps are different kinds (one lookup failed): they cannot be compared, so a recorded install of the server's exact size stands */
+			scpy(c->rec, sizeof c->rec, c->stamp);
+			state_save();
+			up_mod_msg(c, "Up to date", m, sizeof m);
+			up_finish_comp(c, CS_OK, m);
+			return;
+		}
 		snprintf(m, sizeof m, c->rec[0] ? "Changed on the server (%s)" : "New version (%s)", h);
 		up_mod_msg(c, m, c->msg, sizeof c->msg);
 		up_finish_comp(c, CS_UPDATE, c->msg);
@@ -1904,9 +1916,12 @@ static void up_step(uint32_t now) {
 			J *cm = jget(first, "commit"), *cr = jget(cm, "committer");
 			const char *d = jstr(cr, "date");
 			if (d) snprintf(c->stamp, sizeof c->stamp, "%s", d);
+			else logf_("stamp %s: no commit date in the answer, using the header stamp", c->name);
 			j_free(root);
 			free(body);
 		}
+		if (up.job.rc != 0) logf_("stamp %s: GitHub lookup failed (curl %d), using the header stamp", c->name, up.job.rc);
+		logf_("stamp %s: remote '%s' recorded '%s'", c->name, c->stamp, c->rec);
 		up_after_stamp(c);
 		return;
 	}

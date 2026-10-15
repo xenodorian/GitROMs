@@ -140,5 +140,19 @@ app "$OPEN;logupd"
 chk "no-range server: check still works" "st 0 | grep -q 'st=3 nneed=1'"
 app "$OPEN;act=confirm;idle;logupd"
 chk "no-range server: update applied" "grep -q 'norange change' \"$PORTS/sgba/lib/mod020.py\" && st 0 | grep -q 'st=2'"
+# 5. a commit-dated file whose GitHub lookup fails (the API host is unreachable here): the header stamp must not make it "changed" forever
+srv /__reset
+cat > "$T/commit.conf" <<CONF
+Cm|file|http://127.0.0.1:$PORT/game.sgba|sgba/games/cm.sgba|||commit:o/r:p
+CONF
+COMPS="$T/commit.conf" app "$OPEN;act=confirm;idle;logupd"
+chk "commit-dated file installs while the GitHub lookup is down" "[ -s \"$PORTS/sgba/games/cm.sgba\" ]"
+COMPS="$T/commit.conf" app "$OPEN;logupd"
+chk "and the next check says up to date, not changed" "st 0 | grep -q 'st=2'"
+printf 'Cm\t2026-10-13T22:31:53Z\n' > "$PORTS/gitroms/data/updates.txt"
+COMPS="$T/commit.conf" app "$OPEN;logupd"
+chk "a recorded commit date and a failed lookup (header stamp): same size file stands as up to date" "st 0 | grep -q 'st=2'"
+COMPS="$T/commit.conf" app "$OPEN;logupd"
+chk "and it stays up to date on the next check" "st 0 | grep -q 'st=2'"
 chk "no fatal errors" "! grep -q FATAL \"$LOG\""
 exit $fail
