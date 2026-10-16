@@ -124,3 +124,10 @@ Evidence: files recently written on the device were empty or junk (gitroms.aarch
 - GitROMs.sh checks its program (non-empty, ELF magic) and repairs from dist/gitroms.<arch> after a SHA-256 match (dist/gitroms.<arch>.sha256, built by tools/build_zip.py). Overridable with GITROMS_REPAIR_BASE for tests.
 - Cost: a 16 MB single file is read twice and flushed, a few seconds with the screen not redrawing at the very end. Accepted.
 - Still open: SGBA.sh and the game launchers (SGBA repo) do not yet refuse an empty or non-ELF sgba; they live in the SGBA repo.
+
+## Commit-gated updates, dated logs, report age (2026-10-16, version 4.3)
+- Why: release assets are rebuilt by CI and their Last-Modified changes without anything being committed; the old check treated that as an update. Now every built-in item has a commit source (GitROMs: dist/GitROMs.zip; SGBA emulator: the SGBA repo; Parry Perry: the BibooSGBA repo; Slingshot Orbits: web_games/slingshot_orbits in SGBA; Pokemon War and Murder: its ROM path). Commit dates (UTC, ISO) compare as strings: offered only when newer than the recorded one. A failed lookup offers nothing. The recorded date is never lowered.
+- Bundles: the file-by-file compare stays (it finds damage). With no newer commit, differences are labelled "Repair". The record only advances when an install happens (or when nothing is recorded yet): a commit whose package CI has not published yet must not advance it, or the package would later look like a repair.
+- Reports older than max_age_days (default 7) go to reports/old/ and are not posted; event times come from the file names (epoch, or local YYYYMMDD-HHMMSS), else the file time.
+- Per-game logs live in SGBA (sgba/logs/<game>.log). GBA ROMs launched through ArkOS's own emulator cannot be instrumented from here; the status report tails /dev/shm/runcommand.log if it exists (unverified on the device).
+- Open: PokeEmblem. The repo xenodorian/PoekEmblem holds only the two commercial base ROMs (FireRed, Fire Emblem: The Sacred Stones); the patched game is built locally and not committed (its own notes say so). Nothing was added for it until the file to install is decided.

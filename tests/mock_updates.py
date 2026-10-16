@@ -25,7 +25,8 @@ CORRUPT = set()     # entry names whose compressed bytes are damaged in the serv
 VER = {"/bundle.zip": 0, "/game.sgba": 0}   # bumped on every change; becomes Last-Modified
 def stamp(path):
     return email.utils.formatdate(1_790_000_000 + VER[path] * 3600, usegmt=True)
-STATS = {"requests": 0, "bytes": 0, "ranged": 0, "paths": [], "by": {}}
+COMMIT = {"date": "2026-10-10T10:00:00Z"}   # what the fake GitHub says the latest commit date is
+STATS = {"requests": 0, "bytes": 0, "ranged": 0, "paths": [], "by": {}, "commit_calls": 0, "authed": 0}
 
 def build(files, execs=()):
     buf = io.BytesIO()
@@ -61,8 +62,14 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         u = urllib.parse.urlparse(self.path); q = urllib.parse.parse_qs(u.query)
         if u.path == "/__stats": return self.reply(200, json.dumps(STATS).encode())
+        if u.path == "/__commit": COMMIT["date"] = q["date"][0]; return self.reply(200, b"ok")
+        if u.path.startswith("/repos/") and u.path.endswith("/commits"):
+            STATS["commit_calls"] += 1
+            if (self.headers.get("Authorization") or "").startswith("Bearer "): STATS["authed"] += 1
+            body = json.dumps([{"sha": "0" * 40, "commit": {"committer": {"date": COMMIT["date"]}, "message": "test"}}]).encode()
+            return self.reply(200, body, {"Content-Type": "application/json"})
         if u.path == "/__reset":
-            STATS.update(requests=0, bytes=0, ranged=0, paths=[], by={}); return self.reply(200, b"ok")
+            STATS.update(requests=0, bytes=0, ranged=0, paths=[], by={}, commit_calls=0, authed=0); return self.reply(200, b"ok")
         if u.path == "/__set":      # change a bundle file
             FILES[q["name"][0]] = q["text"][0].encode(); VER["/bundle.zip"] += 1; return self.reply(200, b"ok")
         if u.path == "/__add":

@@ -85,7 +85,7 @@ int SDL_PushEvent(SDL_Event *);
 #define MAXITEMS 1500
 #define ROWS 12
 #define ROWH 30
-#define VERSION "4.2"
+#define VERSION "4.3"
 
 static uint32_t fb[VW * VH];
 
@@ -531,6 +531,8 @@ typedef struct {
 	char out[600], err[640], errtext[200];
 } Job;
 
+static char g_api_cfg[460];                         /* curl -K file with the GitHub token (api calls only), 0600, removed at exit */
+
 static int job_start_ex(Job *j, const char *url, const char *out, const char *errpath, int maxtime, int api,
                         const char *range, const char *hdrpath, int maxfilesize) {
 	memset(j, 0, sizeof *j);
@@ -554,6 +556,7 @@ static int job_start_ex(Job *j, const char *url, const char *out, const char *er
 		av[n++] = "--retry"; av[n++] = "2"; av[n++] = "--retry-delay"; av[n++] = "2";
 		av[n++] = "-A"; av[n++] = "GitROMs-R36S/" VERSION;
 		av[n++] = "-H"; av[n++] = api ? "Accept: application/vnd.github+json" : "Accept: */*";
+		if (api && g_api_cfg[0]) { av[n++] = "-K"; av[n++] = g_api_cfg; }       /* 5000 requests an hour instead of 60 */
 		if (range) { av[n++] = "-r"; av[n++] = range; }
 		if (hdrpath) { av[n++] = "-D"; av[n++] = hdrpath; }
 		if (maxfilesize > 0) { av[n++] = "--max-filesize"; av[n++] = mf; }
@@ -637,7 +640,7 @@ typedef struct {
 	int sel, scroll;
 } Frame;
 
-typedef struct { char time[16], status[8], name[200], sys[24], msg[160]; } Hist;
+typedef struct { char time[24], status[8], name[200], sys[24], msg[160]; } Hist;
 
 static Item *items;
 static int nitems, itemcap;
@@ -769,7 +772,7 @@ static void hist_add(const char *status, const char *name, const char *sys, cons
 	if (nhist < 100) nhist++;
 	memmove(&hist[1], &hist[0], (size_t)(nhist - 1) * sizeof hist[0]);
 	time_t t = time(NULL);
-	strftime(hist[0].time, sizeof hist[0].time, "%m-%d %H:%M", localtime(&t));
+	strftime(hist[0].time, sizeof hist[0].time, "%Y-%m-%d %H:%M", localtime(&t));
 	scpy(hist[0].status, sizeof hist[0].status, status);
 	scpy(hist[0].name, sizeof hist[0].name, name);
 	scpy(hist[0].sys, sizeof hist[0].sys, sys);
@@ -1291,7 +1294,7 @@ static void si_stop(void) {
  * (HTTP byte ranges, merged into a few requests) and written over the old
  * ones. Nothing is stored: the files on the card are the record of what is
  * installed, so it also works for installs made by hand. */
-#define MAXCOMP 6
+#define MAXCOMP 10
 #define TAIL_BYTES 131072
 enum { CS_IDLE, CS_CHECKING, CS_OK, CS_UPDATE, CS_NEW, CS_ERROR, CS_UPDATING };
 enum { UPH_NONE, UPH_SIZE, UPH_TAIL, UPH_CD, UPH_CMP, UPH_FETCH, UPH_EXTRACT, UPH_FILEDL, UPH_STAMP };
@@ -1309,6 +1312,7 @@ typedef struct {
 	unsigned char *need;
 	int nneed, nlocal;
 	long long need_c, need_u;
+	char at[24];             /* when GitROMs installed it (UTC), for the reports */
 	uint32_t lcrc;           /* CRC32 of a single file as installed: a later change (damage, a cut-off copy) is noticed */
 	int has_lcrc;
 } Comp;
@@ -1370,6 +1374,7 @@ static void state_save(void) {
 		fprintf(f, "%s\t%s", comp[i].name, comp[i].rec);
 		for (int k = 0; k < comp[i].nsent; k++) fprintf(f, "\t%s", comp[i].sent[k]);
 		if (comp[i].kind == 1 && comp[i].has_lcrc) fprintf(f, "\tcrc:%08x", comp[i].lcrc);
+		if (comp[i].at[0]) fprintf(f, "\tat:%s", comp[i].at);
 		fputc('\n', f);
 	}
 	fflush(f);
@@ -1382,10 +1387,10 @@ static void state_load(void) {
 	char *buf = read_file(g_statepath, 65536, NULL);
 	if (!buf) return;
 	for (char *line = strtok(buf, "\n"); line; line = strtok(NULL, "\n")) {
-		char *f[5] = {0};
+		char *f[8] = {0};
 		int k = 0;
 		char *p = line;
-		while (k < 5) {
+		while (k < 8) {
 			f[k++] = p;
 			char *t = strchr(p, '\t');
 			if (!t) break;
@@ -1398,7 +1403,10 @@ static void state_load(void) {
 				scpy(comp[i].rec, sizeof comp[i].rec, f[1]);
 				comp[i].nsent = 0;
 				comp[i].has_lcrc = 0;
-				for (int j = 2; j < k && comp[i].nsent < 3; j++) {
+				comp[i].at[0] = 0;
+				for (int j = 2; j < k; j++) {
+					if (!strncmp(f[j], "at:", 3)) { scpy(comp[i].at, sizeof comp[i].at, f[j] + 3); continue; }
+					if (comp[i].nsent >= 3 && strncmp(f[j], "crc:", 4)) continue;
 					if (!strncmp(f[j], "crc:", 4)) { comp[i].lcrc = (uint32_t)strtoul(f[j] + 4, NULL, 16); comp[i].has_lcrc = 1; }
 					else scpy(comp[i].sent[comp[i].nsent++], sizeof comp[i].sent[0], f[j]);
 				}
@@ -1453,7 +1461,7 @@ static void comps_load(void) {
 		{"GitROMs", "https://github.com/xenodorian/GitROMs/raw/main/dist/GitROMs.zip", ".",
 		 "gitroms/gitroms.conf,gitroms/components.conf", "commit:xenodorian/GitROMs:dist/GitROMs.zip", "", 0, 1},
 		{"SGBA emulator", "https://github.com/xenodorian/SGBA/releases/download/latest/SGBA-arkos-aarch64.zip", ".",
-		 "README.txt,sgba/controls.json", "",
+		 "README.txt,sgba/controls.json", "commit:xenodorian/SGBA:",
 		 /* the old Python emulator's files, removed once the native one is verified */
 		 "sgba/python,sgba/site,sgba/cache/sgba-package-cache,sgba/runtime.py,sgba/sgba_audio.py,sgba/sgba_canvas.py,sgba/sgba_gfx.py,"
 		 "sgba/sgba_js.py,sgba/sgba_js_shim.js,sgba/sgba_js_ui.py,sgba/sgba_package.py,sgba/sgba_shell.py", 0, 0},
@@ -1462,9 +1470,9 @@ static void comps_load(void) {
 		 * Earlier copies are removed after a verified install: the file and folder inside the
 		 * emulator's games folder, and the loose unpacked project in parry-perry/. */
 		{"Parry Perry (game)", "https://github.com/xenodorian/BibooSGBA/releases/download/latest/parry-perry-port.zip",
-		 ".", "", "", "sgba/games/parry-perry.sgba,sgba/games/parry-perry,parry-perry", 0, 0},
+		 ".", "", "commit:xenodorian/BibooSGBA:", "sgba/games/parry-perry.sgba,sgba/games/parry-perry,parry-perry", 0, 0},
 		{"Slingshot Orbits", "https://github.com/xenodorian/SGBA/releases/download/latest/slingshot-orbits-port.zip",
-		 ".", "", "", "slingshot_orbits.sgba,sgba/games/slingshot_orbits.sgba", 0, 0},
+		 ".", "", "commit:xenodorian/SGBA:web_games/slingshot_orbits", "slingshot_orbits.sgba,sgba/games/slingshot_orbits.sgba", 0, 0},
 		{"Pokemon War and Murder", "https://github.com/xenodorian/Pokemon-War-and-Murder/raw/main/roms/Pokemon%20War%20and%20Murder.gba",
 		 "../gba/Pokemon War and Murder.gba", "", "commit:xenodorian/Pokemon-War-and-Murder:roms/Pokemon%20War%20and%20Murder.gba", "", 1, 0},
 	};
@@ -1733,6 +1741,7 @@ static int stamp_is_commit_date(const char *st) { return st[0] >= '0' && st[0] <
 
 static void comp_record(Comp *c) {
 	if (!c->stamp[0]) return;
+	if (!strncmp(c->src, "commit:", 7) && stamp_is_commit_date(c->rec) && (!stamp_is_commit_date(c->stamp) || strcmp(c->stamp, c->rec) < 0)) return;   /* a failed lookup, or an older date, never replaces the recorded commit date */
 	scpy(c->rec, sizeof c->rec, c->stamp);
 	c->nsent = 0;
 	if (c->kind == 0 && c->dir.n) {
@@ -1744,6 +1753,13 @@ static void comp_record(Comp *c) {
 		}
 	}
 	state_save();
+}
+
+static void comp_mark_installed(Comp *c) {
+	time_t t = time(NULL);
+	struct tm g;
+	gmtime_r(&t, &g);
+	strftime(c->at, sizeof c->at, "%Y-%m-%dT%H:%M:%SZ", &g);
 }
 
 static int up_fast_ok(Comp *c) {
@@ -1770,6 +1786,13 @@ static void up_after_stamp(Comp *c) {
 		comp_path(c, "", path, sizeof path);
 		c->need_c = c->total;
 		if (!path_exists(path)) { snprintf(m, sizeof m, "Not installed (%s)", h); up_finish_comp(c, CS_NEW, m); return; }
+		if (!strncmp(c->src, "commit:", 7) && stamp_is_commit_date(c->stamp) && c->rec[0] && stamp_is_commit_date(c->rec) && strcmp(c->stamp, c->rec) > 0) {
+			snprintf(m, sizeof m, "New commit (%s)", h);              /* a newer commit explains a different size: it is a new version, not damage */
+			logf_("update check %s: commit %s is newer than the installed %s", c->name, c->stamp, c->rec);
+			up_mod_msg(c, m, c->msg, sizeof c->msg);
+			up_finish_comp(c, CS_UPDATE, c->msg);
+			return;
+		}
 		{                                                         /* a cut-off or damaged copy has the wrong size whatever the stamps say */
 			long long have = file_size(path);
 			if (c->total > 0 && have != c->total) {
@@ -1782,7 +1805,16 @@ static void up_after_stamp(Comp *c) {
 				return;
 			}
 		}
-		if (c->has_lcrc) {                                        /* same size, but is it still the file that was installed? */
+		if (!c->has_lcrc) {                                       /* installed before checksums were recorded: take the checksum of the file as it is now as the baseline */
+			long long ls = 0;
+			uint32_t lc = 0;
+			if (dur_crc(path, &ls, &lc) == 0) {
+				c->lcrc = lc;
+				c->has_lcrc = 1;
+				if (c->rec[0]) state_save();
+				logf_("update check %s: baseline checksum %08x recorded", c->name, lc);
+			}
+		} else {                                                  /* same size, but is it still the file that was installed? */
 			long long ls = 0;
 			uint32_t lc = 0;
 			if (dur_crc(path, &ls, &lc) != 0 || lc != c->lcrc) {
@@ -1792,15 +1824,34 @@ static void up_after_stamp(Comp *c) {
 				return;
 			}
 		}
-		if (up_fast_ok(c)) { up_mod_msg(c, "Up to date", m, sizeof m); up_finish_comp(c, CS_OK, m); return; }
-		if (!strncmp(c->src, "commit:", 7) && c->stamp[0] && c->rec[0] && stamp_is_commit_date(c->stamp) != stamp_is_commit_date(c->rec) && file_size(path) == c->total) {
-			/* the two stamps are different kinds (one lookup failed): they cannot be compared, so a recorded install of the server's exact size stands */
-			scpy(c->rec, sizeof c->rec, c->stamp);
-			state_save();
-			up_mod_msg(c, "Up to date", m, sizeof m);
-			up_finish_comp(c, CS_OK, m);
+		if (!strncmp(c->src, "commit:", 7)) {
+			/* Updates are decided by commits: only a commit newer than the one recorded at the install offers a new version. */
+			int sd = c->stamp[0] && stamp_is_commit_date(c->stamp), rd = c->rec[0] && stamp_is_commit_date(c->rec);
+			if (!sd) {                                                   /* the commit lookup failed: no evidence of anything new */
+				logf_("update check %s: could not read the latest commit date (recorded '%s'), no update offered", c->name, c->rec);
+				up_mod_msg(c, "Up to date (could not reach GitHub to check for commits)", m, sizeof m);
+				up_finish_comp(c, CS_OK, m);
+			} else if (!c->rec[0]) {
+				snprintf(m, sizeof m, "Not recorded yet (%s)", h);
+				up_mod_msg(c, m, c->msg, sizeof c->msg);
+				up_finish_comp(c, CS_UPDATE, c->msg);
+			} else if (!rd) {                                            /* an older record of another kind: cannot be compared, the verified file stands */
+				scpy(c->rec, sizeof c->rec, c->stamp);
+				state_save();
+				up_mod_msg(c, "Up to date", m, sizeof m);
+				up_finish_comp(c, CS_OK, m);
+			} else if (strcmp(c->stamp, c->rec) > 0) {
+				snprintf(m, sizeof m, "New commit (%s)", h);
+				logf_("update check %s: commit %s is newer than the installed %s", c->name, c->stamp, c->rec);
+				up_mod_msg(c, m, c->msg, sizeof c->msg);
+				up_finish_comp(c, CS_UPDATE, c->msg);
+			} else {
+				up_mod_msg(c, "Up to date", m, sizeof m);
+				up_finish_comp(c, CS_OK, m);
+			}
 			return;
 		}
+		if (up_fast_ok(c)) { up_mod_msg(c, "Up to date", m, sizeof m); up_finish_comp(c, CS_OK, m); return; }
 		snprintf(m, sizeof m, c->rec[0] ? "Changed on the server (%s)" : "New version (%s)", h);
 		up_mod_msg(c, m, c->msg, sizeof c->msg);
 		up_finish_comp(c, CS_UPDATE, c->msg);
@@ -1855,9 +1906,16 @@ static void up_cmp_step(Comp *c) {
 	}
 	char h[32];
 	human(h, sizeof h, c->need_c);
-	if (!c->nneed) { comp_record(c); char b[100]; snprintf(b, sizeof b, "Up to date (%d files)", c->dir.n); up_mod_msg(c, b, c->msg, sizeof c->msg); up_finish_comp(c, CS_OK, c->msg); }
+	if (!c->nneed) { if (!c->rec[0]) comp_record(c); char b[100];   /* a newer commit whose package is not published yet must not advance the record */ snprintf(b, sizeof b, "Up to date (%d files)", c->dir.n); up_mod_msg(c, b, c->msg, sizeof c->msg); up_finish_comp(c, CS_OK, c->msg); }
 	else if (!c->nlocal) { snprintf(c->msg, sizeof c->msg, "Not installed: %d files, %s", c->nneed, h); up_finish_comp(c, CS_NEW, c->msg); }
-	else { char b[100]; snprintf(b, sizeof b, "%d of %d files changed, %s", c->nneed, c->dir.n, h); up_mod_msg(c, b, c->msg, sizeof c->msg); up_finish_comp(c, CS_UPDATE, c->msg); }
+	else {
+		char b[100];
+		int quiet = !strncmp(c->src, "commit:", 7) && stamp_is_commit_date(c->stamp) && c->rec[0] && stamp_is_commit_date(c->rec) && strcmp(c->stamp, c->rec) <= 0;
+		if (quiet) snprintf(b, sizeof b, "Repair: %d of %d files damaged or changed, no new commits", c->nneed, c->dir.n);   /* not an update: nothing was committed since the install */
+		else snprintf(b, sizeof b, "%d of %d files changed, %s", c->nneed, c->dir.n, h);
+		up_mod_msg(c, b, c->msg, sizeof c->msg);
+		up_finish_comp(c, CS_UPDATE, c->msg);
+	}
 	/* keep dir/need for the update step */
 }
 
@@ -1932,6 +1990,7 @@ static void up_extract_step(Comp *c) {
 	up.updated[up.ci] = 1;
 	if (c->self) up.restart_needed = 1;
 	sync();                                                   /* everything of this update is on the card before it is called done */
+	comp_mark_installed(c);
 	comp_record(c);
 	comp_runtime_free(c);
 	up_finish_comp(c, CS_OK, m);
@@ -1977,6 +2036,7 @@ static void up_step(uint32_t now) {
 		c->lcrc = fcrc;
 		c->has_lcrc = 1;
 		up.updated[up.ci] = 1;
+		comp_mark_installed(c);
 		comp_record(c);
 		up_finish_comp(c, CS_OK, "Updated");
 		return;
@@ -1996,9 +2056,16 @@ static void up_step(uint32_t now) {
 		if (hdr_find(p, "last-modified:", v, sizeof v)) scpy(c->stamp, sizeof c->stamp, v);
 		else if (hdr_find(p, "etag:", v, sizeof v)) snprintf(c->stamp, sizeof c->stamp, "etag %s", v);
 		if (!strncmp(c->src, "commit:", 7)) {
-			char repo[120], path[120], url[400], out[480], err[480];
-			if (sscanf(c->src + 7, "%119[^:]:%119s", repo, path) == 2) {
-				snprintf(url, sizeof url, "%s/repos/%s/commits?path=%s&per_page=1", g_api, repo, path);
+			char repo[120] = "", path[120] = "", url[400], out[480], err[480];
+			const char *cs = c->src + 7, *col = strchr(cs, ':');
+			size_t rl = col ? (size_t)(col - cs) : strlen(cs);
+			if (rl >= sizeof repo) rl = sizeof repo - 1;
+			memcpy(repo, cs, rl);
+			repo[rl] = 0;
+			if (col) scpy(path, sizeof path, col + 1);
+			if (repo[0]) {
+				if (path[0]) snprintf(url, sizeof url, "%s/repos/%s/commits?path=%s&per_page=1", g_api, repo, path);
+				else snprintf(url, sizeof url, "%s/repos/%s/commits?per_page=1", g_api, repo);
 				up_tmp(out, sizeof out, "up.stamp");
 				up_tmp(err, sizeof err, "up.err");
 				remove(out);
@@ -2106,6 +2173,8 @@ static struct {
 	int phase, n, i, sent, started;
 	char repo[100], token[200], dir[420], msg[300], url[240];
 	char file[RP_MAX][96];
+	time_t when[RP_MAX];          /* when the incident happened (from its file name, else the file's time) */
+	int old, max_days;            /* reports older than max_days are set aside in reports/old/, not posted */
 	Job job;
 } rp;
 
@@ -2113,6 +2182,7 @@ static void rp_conf_load(void) {
 	char path[460];
 	snprintf(path, sizeof path, "%s/upload.conf", g_home);
 	rp.repo[0] = rp.token[0] = 0;
+	rp.max_days = 7;
 	scpy(rp.repo, sizeof rp.repo, "xenodorian/GitROMs");
 	char *txt = read_file(path, 4096, NULL);
 	if (!txt) {
@@ -2122,7 +2192,8 @@ static void rp_conf_load(void) {
 			      "# Make a fine-grained token (GitHub > Settings > Developer settings > Fine-grained tokens) for that repository\n"
 			      "# with Issues: Read and write, and paste it after token=\n"
 			      "# The repository is public unless you pick a private one, so keep personal data out of it.\n"
-			      "repo=xenodorian/GitROMs\ntoken=\n", f);
+			      "# Reports older than this many days are not worth posting: they are moved to reports/old/ instead.\n"
+			      "repo=xenodorian/GitROMs\ntoken=\nmax_age_days=7\n", f);
 			fclose(f);
 		}
 		return;
@@ -2137,24 +2208,68 @@ static void rp_conf_load(void) {
 		while (l && (v[l - 1] == '\r' || v[l - 1] == ' ')) v[--l] = 0;
 		if (!strcmp(line, "repo") && v[0]) scpy(rp.repo, sizeof rp.repo, v);
 		else if (!strcmp(line, "token")) scpy(rp.token, sizeof rp.token, v);
+		else if (!strcmp(line, "max_age_days") && atoi(v) > 0) rp.max_days = atoi(v);
 	}
 	free(txt);
 }
 
 static int rp_name_cmp(const void *a, const void *b) { return strcmp((const char *)b, (const char *)a); }
 
+/* When an incident happened: the epoch in "crash-1792026723.txt", the local time in "unclean-20261015-040815.txt"; otherwise the file's own time. */
+static time_t rp_name_time(const char *dir, const char *name) {
+	const char *p = name;
+	long long ep = 0;
+	int y, mo, d, h, mi, se;
+	while (*p && !(*p >= '0' && *p <= '9')) p++;
+	if (sscanf(p, "%4d%2d%2d-%2d%2d%2d", &y, &mo, &d, &h, &mi, &se) == 6 && y >= 2020 && mo >= 1 && mo <= 12) {
+		struct tm t;
+		memset(&t, 0, sizeof t);
+		t.tm_year = y - 1900; t.tm_mon = mo - 1; t.tm_mday = d; t.tm_hour = h; t.tm_min = mi; t.tm_sec = se; t.tm_isdst = -1;
+		return mktime(&t);
+	}
+	if (sscanf(p, "%lld", &ep) == 1 && ep > 1500000000LL && ep < 4000000000LL) return (time_t)ep;
+	char path[560];
+	struct stat st;
+	snprintf(path, sizeof path, "%s/%s", dir, name);
+	return stat(path, &st) == 0 ? st.st_mtime : time(NULL);
+}
+
 static void rp_scan(void) {
 	rp.n = 0;
+	rp.old = 0;
+	if (rp.max_days <= 0) rp.max_days = 7;
 	snprintf(rp.dir, sizeof rp.dir, "%s/sgba/reports", g_ports);
 	DIR *d = opendir(rp.dir);
 	if (!d) return;
+	time_t now = time(NULL);
 	struct dirent *e;
 	while ((e = readdir(d)) && rp.n < RP_MAX) {
 		size_t l = strlen(e->d_name);
-		if (l > 4 && l < sizeof rp.file[0] && !strcmp(e->d_name + l - 4, ".txt")) { memcpy(rp.file[rp.n], e->d_name, l + 1); rp.n++; }
+		if (!(l > 4 && l < sizeof rp.file[0] && !strcmp(e->d_name + l - 4, ".txt"))) continue;
+		time_t t = rp_name_time(rp.dir, e->d_name);
+		if (now - t > (time_t)rp.max_days * 86400) {                  /* too old to be worth posting */
+			char from[560], to[600], od[480];
+			snprintf(od, sizeof od, "%s/old", rp.dir);
+			mkdir_p(od);
+			snprintf(from, sizeof from, "%s/%s", rp.dir, e->d_name);
+			snprintf(to, sizeof to, "%s/%s", od, e->d_name);
+			if (rename(from, to) == 0) rp.old++;
+			continue;
+		}
+		memcpy(rp.file[rp.n], e->d_name, l + 1);
+		rp.when[rp.n] = t;
+		rp.n++;
 	}
 	closedir(d);
-	qsort(rp.file, (size_t)rp.n, sizeof rp.file[0], rp_name_cmp);
+	for (int i = 0; i < rp.n; i++)                                       /* newest first */
+		for (int j = i + 1; j < rp.n; j++)
+			if (rp.when[j] > rp.when[i]) {
+				char tmp[96];
+				time_t tt = rp.when[i];
+				memcpy(tmp, rp.file[i], sizeof tmp); memcpy(rp.file[i], rp.file[j], sizeof tmp); memcpy(rp.file[j], tmp, sizeof tmp);
+				rp.when[i] = rp.when[j]; rp.when[j] = tt;
+			}
+	if (rp.old) logf_("reports: %d older than %d days set aside in reports/old/", rp.old, rp.max_days);
 }
 
 static void rp_open(void) {
@@ -2215,9 +2330,17 @@ static int rp_build(int idx, char *title, size_t tn) {
 		if (dash && !strncmp(rp.file[idx], "gitroms-", 8)) dash = strchr(dash + 1, '-');   /* "gitroms-crash-123.txt" is kind "gitroms-crash" */
 		if (dash && (size_t)(dash - rp.file[idx]) < sizeof kind) { memcpy(kind, rp.file[idx], (size_t)(dash - rp.file[idx])); kind[dash - rp.file[idx]] = 0; }
 		long long sz = file_size(p);
+		char ev[32], age[48];
+		time_t et = rp.when[idx], nowt = time(NULL);
+		strftime(ev, sizeof ev, "%Y-%m-%d %H:%M", localtime(&et));
+		long long mins = (nowt - et) / 60;
+		if (mins < 90) snprintf(age, sizeof age, "%lld min", mins < 0 ? 0 : mins);
+		else if (mins < 2880) snprintf(age, sizeof age, "%lld h", mins / 60);
+		else snprintf(age, sizeof age, "%lld days", mins / 1440);
+		fprintf(o, "Event time: %s (%s before this was sent at %s)\n\n", ev, age, when);
 		char *body = read_file(p, 56000, NULL);
 		if (body) { fputs(body, o); if (sz > 56000) fputs("\n[cut: report was larger than 56 KB]\n", o); free(body); }
-		snprintf(title, tn, "[%s] %s %s", kind, host, when);
+		snprintf(title, tn, "[%s] %s %s", kind, host, ev);
 	} else {
 		char p[560];
 		fprintf(o, "GitROMs status report\nversion: %s\ntime: %s\ndevice: %s\nhome: %s\nports: %s\n", VERSION, when, host, g_home, g_ports);
@@ -2225,6 +2348,27 @@ static int rp_build(int idx, char *title, size_t tn) {
 		rp_tail(o, p, 25, "sgba/reports/sessions.log");
 		snprintf(p, sizeof p, "%s/sgba/sgba_launch.log", g_ports);
 		rp_tail(o, p, 40, "sgba/sgba_launch.log");
+		{                                                              /* one log per game: its sessions, crashes and errors with their times */
+			char ld[560];
+			snprintf(ld, sizeof ld, "%s/sgba/logs", g_ports);
+			DIR *dd = opendir(ld);
+			if (dd) {
+				struct dirent *de;
+				int shown = 0;
+				while ((de = readdir(dd)) && shown < 6) {
+					size_t dl = strlen(de->d_name);
+					if (dl > 4 && !strcmp(de->d_name + dl - 4, ".log")) {
+						char lp[700], ttl[160];
+						snprintf(lp, sizeof lp, "%s/%s", ld, de->d_name);
+						snprintf(ttl, sizeof ttl, "sgba/logs/%s", de->d_name);
+						rp_tail(o, lp, 25, ttl);
+						shown++;
+					}
+				}
+				closedir(dd);
+			}
+		}
+		rp_tail(o, "/dev/shm/runcommand.log", 30, "ArkOS runcommand.log (the emulator that ran the last ROM, if present)");
 		snprintf(p, sizeof p, "%s/sgba/sgba.log", g_ports);
 		rp_tail(o, p, 60, "sgba/sgba.log");
 		rp_tail(o, g_logpath, 80, "gitroms.log");
@@ -2922,6 +3066,7 @@ static void draw_screen(uint32_t now) {
 	case SC_REPORTS: {
 		header("Send reports", rp.repo);
 		snprintf(buf, sizeof buf, "Waiting: %d report%s + a status report", rp.n, rp.n == 1 ? "" : "s");
+		if (rp.old) { char ob[100]; snprintf(ob, sizeof ob, "%d older than %d days set aside (reports/old)", rp.old, rp.max_days); text_fit(32, 44, ob, C_MUTED, 1, VW - 64); }
 		text_fit(32, 70, buf, C_FG, 2, VW - 64);
 		text_wrap(32, 100, "Each is posted as a new issue in the repo shown at the top.", C_MUTED, 2, VW - 64, 2);
 		if (rp.token[0]) text(32, 160, "Token: set", C_GOOD, 2);
@@ -3076,6 +3221,36 @@ static void load_conf(const char *path) {
 	free(s);
 }
 
+/* The GitHub token from upload.conf (if there is one) also authenticates the API calls that look for new commits: 5000 requests an hour
+ * instead of 60 per address. It goes to curl through a private 0600 file, never on a command line, and only for API calls. */
+static void api_auth_init(void) {
+	g_api_cfg[0] = 0;
+	char path[460];
+	snprintf(path, sizeof path, "%s/upload.conf", g_home);
+	char *txt = read_file(path, 4096, NULL);
+	if (!txt) return;
+	char token[200] = "";
+	for (char *line = strtok(txt, "\n"); line; line = strtok(NULL, "\n")) {
+		while (*line == ' ' || *line == '\t') line++;
+		if (strncmp(line, "token=", 6)) continue;
+		scpy(token, sizeof token, line + 6);
+		size_t l = strlen(token);
+		while (l && (token[l - 1] == '\r' || token[l - 1] == ' ')) token[--l] = 0;
+	}
+	free(txt);
+	if (!token[0] || strpbrk(token, "\"\\ \t")) return;
+	char cfg[460];
+	snprintf(cfg, sizeof cfg, "%s/api.cfg", g_tmp);
+	int fd = open(cfg, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+	if (fd < 0) return;
+	char line[300];
+	int n = snprintf(line, sizeof line, "header = \"Authorization: Bearer %s\"\n", token);
+	if (write(fd, line, (size_t)n) != n) { close(fd); remove(cfg); return; }
+	close(fd);
+	scpy(g_api_cfg, sizeof g_api_cfg, cfg);
+	logf_("api: GitHub requests are authenticated");
+}
+
 /* ---- start-up housekeeping: what interrupted or repeated updates leave behind ---- */
 static void hk_parts(const char *dir, int depth, int *n, long long *bytes) {
 	DIR *d = opendir(dir);
@@ -3212,6 +3387,7 @@ int main(void) {
 		snprintf(marker, sizeof marker, "%s/.running", g_home);
 		mkdir_p(rdir);
 		housekeeping(rdir, marker);
+		api_auth_init();
 		dg_install(rdir, marker);
 		dg_marker_set("starting");
 	}
@@ -3337,6 +3513,7 @@ int main(void) {
 		job_cancel(&task.job);
 		if (task.type == T_DL) remove(dl.part);
 	}
+	if (g_api_cfg[0]) remove(g_api_cfg);
 	sync();
 	dg_clean();
 	if (g_sig) logf_("exit: received signal %d", (int)g_sig);

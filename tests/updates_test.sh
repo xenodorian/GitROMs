@@ -179,5 +179,41 @@ app "$OPEN;logupd"
 chk "bundle: an emptied file is found by the check" "st 0 | grep -q 'st=3 nneed=1'"
 app "$OPEN;act=confirm;idle;logupd"
 chk "bundle: and rewritten, read back and verified" "[ -s \"$PORTS/sgba/lib/mod020.py\" ] && st 0 | grep -q 'st=2'"
+# 9. updates are decided by commits, not by a changed Last-Modified or a rebuilt file
+cat > "$T/gate.conf" <<CONF
+GateFile|file|http://127.0.0.1:$PORT/game.sgba|sgba/games/gate.sgba|||commit:o/r:p
+GateBundle|zip|http://127.0.0.1:$PORT/bundle.zip|gatebundle|||commit:o/r:
+CONF
+rm -f "$PORTS/gitroms/data/updates.txt"
+gapp() { GITROMS_API="http://127.0.0.1:$PORT" COMPS="$T/gate.conf" app "$@"; }
+srv "/__commit?date=2026-10-10T10:00:00Z"
+gapp "$OPEN;act=confirm;idle;logupd"
+chk "gate: first install of a commit-dated file and bundle" "st 0 | grep -q 'st=2' && st 1 | grep -q 'st=2' && [ -s \"$PORTS/sgba/games/gate.sgba\" ] && [ -s \"$PORTS/gatebundle/README.txt\" ]"
+chk "gate: the record keeps the commit date and the install time" "grep -q '^GateFile	2026-10-10T10:00:00Z' \"$PORTS/gitroms/data/updates.txt\" && grep -q 'at:20' \"$PORTS/gitroms/data/updates.txt\""
+srv "/__touch?path=/game.sgba"; srv "/__touch?path=/bundle.zip"
+gapp "$OPEN;logupd"
+chk "gate: a new Last-Modified without a new commit offers nothing" "st 0 | grep -q 'st=2' && st 1 | grep -q 'st=2'"
+srv "/__commit?date=2026-10-12T10:00:00Z"; srv "/__game?text=changed"
+gapp "$OPEN;logupd"
+chk "gate: a newer commit offers the file as a new version" "st 0 | grep -q 'st=3' && grep -q 'is newer than the installed 2026-10-10T10:00:00Z' \"$LOG\""
+gapp "$OPEN;act=confirm;idle;logupd"
+chk "gate: after the update the commit date is recorded" "st 0 | grep -q 'st=2' && grep -q '^GateFile	2026-10-12T10:00:00Z' \"$PORTS/gitroms/data/updates.txt\""
+srv "/__commit?date=2026-10-01T00:00:00Z"
+gapp "$OPEN;logupd"
+chk "gate: an older commit date never offers a downgrade" "st 0 | grep -q 'st=2'"
+srv "/__commit?date=2026-10-12T10:00:00Z"
+srv "/__set?name=README.txt&text=v2"
+gapp "$OPEN;logupd"
+chk "gate: a changed bundle with a newer commit is offered as an update, not a repair" "st 1 | grep -q 'st=3' && ! grep -q 'Repair:' \"$LOG\""
+gapp "$OPEN;act=confirm;idle;logupd"
+chk "gate: after that update the bundle's record is the new commit" "st 1 | grep -q 'st=2' && grep -q '^GateBundle	2026-10-12T10:00:00Z' \"$PORTS/gitroms/data/updates.txt\""
+echo junk > "$PORTS/gatebundle/README.txt"
+gapp "$OPEN;logupd"
+chk "gate: a damaged bundle file with no new commit is a repair, not an update" "st 1 | grep -q 'st=3' && grep -q 'Repair: 1 of' \"$LOG\""
+printf 'repo=o/r\ntoken=abc123\n' > "$PORTS/gitroms/data/upload.conf"
+srv /__reset
+gapp "$OPEN;logupd"
+chk "gate: with a token in upload.conf the commit lookups are authenticated" "grep -q 'api: GitHub requests are authenticated' \"$LOG\" && [ \"\$(curl -s --noproxy '*' http://127.0.0.1:$PORT/__stats | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d[\"authed\"]>0 and d[\"authed\"]==d[\"commit_calls\"])')\" = True ]"
+chk "gate: the token never appears in the log" "! grep -q abc123 \"$LOG\""
 chk "no fatal errors" "! grep -q FATAL \"$LOG\""
 exit $fail

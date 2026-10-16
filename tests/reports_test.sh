@@ -42,8 +42,8 @@ printf 'repo=owner/repo\ntoken=secret123\n' > "$H/upload.conf"
 app "$OPEN;act=confirm;idle;logrp"
 chk "3 issues posted" "[ \"\$(posts | python3 -c 'import sys,json;print(len(json.load(sys.stdin)))')\" = 3 ]"
 chk "posted to the configured repo with the app user agent" "posts | python3 -c 'import sys,json;d=json.load(sys.stdin);raise SystemExit(0 if all(p[\"path\"]==\"/repos/owner/repo/issues\" and p[\"ua\"].startswith(\"GitROMs\") for p in d) else 1)'"
-chk "crash body arrived intact (quotes, backslash, newlines)" "posts | python3 -c 'import sys,json;d=json.load(sys.stdin);b=[p for p in d if p[\"title\"].startswith(\"[crash]\")][0][\"body\"];raise SystemExit(0 if b.startswith(\"SGBA report: crash\\nbuild: abc\\nsignal: 11 \\\"quoted\\\" \\\\ back\\nline two\") else 1)'"
-chk "status report carries the launch log, sgba.log, sessions and gitroms.log" "posts | python3 -c 'import sys,json;d=json.load(sys.stdin);b=[p for p in d if p[\"title\"].startswith(\"[status]\")][0][\"body\"];raise SystemExit(0 if all(k in b for k in (\"sgba launch log line\",\"sgba log line\",\"fps=59.9\",\"GitROMs 4.2 start\",\"version: 4.2\")) else 1)'"
+chk "crash body arrived intact (quotes, backslash, newlines)" "posts | python3 -c 'import sys,json;d=json.load(sys.stdin);b=[p for p in d if p[\"title\"].startswith(\"[crash]\")][0][\"body\"];raise SystemExit(0 if b.startswith(\"Event time: \") and \"SGBA report: crash\\nbuild: abc\\nsignal: 11 \\\"quoted\\\" \\\\ back\\nline two\" in b else 1)'"
+chk "status report carries the launch log, sgba.log, sessions and gitroms.log" "posts | python3 -c 'import sys,json;d=json.load(sys.stdin);b=[p for p in d if p[\"title\"].startswith(\"[status]\")][0][\"body\"];raise SystemExit(0 if all(k in b for k in (\"sgba launch log line\",\"sgba log line\",\"fps=59.9\",\"GitROMs 4.3 start\",\"version: 4.3\")) else 1)'"
 chk "sent files moved into sent/, sessions.log stays" "[ ! -e \"$R/crash-20261014-100000.txt\" ] && [ -f \"$R/sent/crash-20261014-100000.txt\" ] && [ -f \"$R/sessions.log\" ]"
 chk "done message says Sent 3 reports" "grep -q 'rp phase=2 n=0 sent=3 .*msg=Sent 3 reports' \"\$LOG\""
 chk "token is not written to the log" "! grep -q secret123 \"\$LOG\""
@@ -60,4 +60,14 @@ chk "bad token: message names the token, nothing posted, file kept" "grep -q 'ms
 printf 'repo=nope/nope\ntoken=secret123\n' > "$H/upload.conf"
 app "$OPEN;act=confirm;idle;logrp"
 chk "missing repo: 404 message" "grep -q 'msg=Repository not found' \"\$LOG\" && [ -f \"$R/crash-20261014-110000.txt\" ]"
+
+# 7. reports carry the time of the incident, and ones older than max_age_days are set aside, not posted
+printf 'SGBA report: crash\nbuild: old\n' > "$R/crash-1700000000.txt"                      # November 2023
+printf 'SGBA report: crash\nbuild: recent\n' > "$R/crash-$(date +%s).txt"
+rm -f "$R"/unclean-* "$R"/sent/* 2>/dev/null
+curl -s --noproxy '*' "http://127.0.0.1:$PORT/__reset" >/dev/null
+printf 'repo=owner/repo\ntoken=secret123\nmax_age_days=7\n' > "$H/upload.conf"
+app "$OPEN;act=confirm;idle;logrp"
+chk "an old report is set aside in reports/old and not posted" "[ -e \"$R/old/crash-1700000000.txt\" ] && [ ! -e \"$R/crash-1700000000.txt\" ] && ! posts | grep -q 'build: old'"
+chk "a recent report is posted with its event time in the body and the title" "posts | python3 -c 'import sys,json;d=json.load(sys.stdin);r=[p for p in d if \"build: recent\" in p[\"body\"]];raise SystemExit(0 if r and r[0][\"body\"].startswith(\"Event time: 20\") and r[0][\"title\"].startswith(\"[crash]\") else 1)'"
 exit $fail
