@@ -49,3 +49,7 @@ Files are now written safely: each new file is flushed to the card, read back fr
 
 At every start GitROMs also deletes what interrupted updates leave behind (temporary files and half-downloaded `.gitroms-part` files) and checks that the card is writable with room to spare; a warning shows on the Updates screen. A single-file item whose size differs from the server's (cut off or damaged) is offered as an update even when its dates match.
 First use: GitROMs creates `gitroms/data/upload.conf`. On a computer, set `repo=` and paste a fine-grained GitHub token (Issues: read and write on that repo) after `token=`, then press SELECT on the screen to reload. The default repo is public, so anything sent there is public.
+
+## Playing the two ROM hacks from the ports menu
+
+`Pokemon_War_and_Murder.sh` and `Pokemon_Fire_Emblem.sh` sit in the ports folder next to `GitROMs.sh`, so ArkOS lists them under Ports. Each starts the ROM that GitROMs keeps in `<roms>/gba` (`PokemonWarAndMurder.gba`, `PokemblemTheSacredStones.gba`) through `gitroms/play_gba.sh`. That script runs the command ArkOS itself uses for the gba system (read from `es_systems.cfg`), or RetroArch with an mGBA or gpSP core if that command cannot be used. If the ROM is not on the card it says so. Everything is logged with times to `gitroms/data/play.log`. Test: `tests/play_test.sh`. Not yet confirmed on the device.

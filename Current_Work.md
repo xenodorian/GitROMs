@@ -25,3 +25,8 @@ Rules: work only on `main` in xenodorian/GitROMs, xenodorian/SGBA and xenodorian
 
 ## Verification
 All GitROMs suites pass on PC (updates, update, reports, pad, input, smoke, diag, launcher) and the update, reports and update suites also pass under AddressSanitizer and UBSan. SGBA workflows "Native runtime" and "Runtime checks" are green on 4cb8d01. No test of this work has run on the real R36S.
+
+## Ports-menu launchers for the two ROM hacks (2026-10-17)
+- Added `Pokemon_War_and_Murder.sh`, `Pokemon_Fire_Emblem.sh` and `gitroms/play_gba.sh` (in GitROMs.zip, so they arrive with the normal update).
+- Source repos checked 2026-10-17: `PokemblemTheSacredStones.gba` is in xenodorian/PoekEmblem under `release/` (found by name). `PokemonWarAndMurder.gba` is NOT in xenodorian/Pokemon-War-and-Murder yet (only `PokemonWarAndMurder.ips`, `Pokemon War and Murder.ips` and `roms/Pokemon War and Murder.gba`, a different name). The updater finds it by name once it is committed; until then it shows nothing to download for it.
+- Unverified on the device: that ArkOS's gba command or RetroArch starts from a ports script.

@@ -1,22 +1,37 @@
 {
   "version": 4,
   "name": "GitROMs.zip",
-  "items": ["GitROMs.sh", "gitroms"],
+  "items": [
+    "GitROMs.sh",
+    "Pokemon_War_and_Murder.sh",
+    "Pokemon_Fire_Emblem.sh",
+    "gitroms"
+  ],
   "items_opt": [],
   "attr": {
     "title": "GitROMs",
-    "porter": ["xenodorian"],
+    "porter": [
+      "xenodorian"
+    ],
     "desc": "Browse a GitHub user's public repositories on the handheld and download ROM files straight into the right system folders. A dedicated app, not a web browser. No login.",
     "inst": "Extract into the ports folder on the roms partition. Needs Wi-Fi. Native SDL2 program, no extra runtime.",
-    "genres": ["utility"],
+    "genres": [
+      "utility"
+    ],
     "image": {},
     "rtr": false,
     "exp": false,
     "runtime": [],
     "store": [],
     "availability": "full",
-    "reqs": ["curl", "sdl2"],
-    "arch": ["aarch64", "x86_64"],
+    "reqs": [
+      "curl",
+      "sdl2"
+    ],
+    "arch": [
+      "aarch64",
+      "x86_64"
+    ],
     "min_glibc": "2.17"
   }
 }
