@@ -85,7 +85,7 @@ int SDL_PushEvent(SDL_Event *);
 #define MAXITEMS 1500
 #define ROWS 12
 #define ROWH 30
-#define VERSION "4.3"
+#define VERSION "4.4"
 
 static uint32_t fb[VW * VH];
 
@@ -1297,7 +1297,7 @@ static void si_stop(void) {
 #define MAXCOMP 10
 #define TAIL_BYTES 131072
 enum { CS_IDLE, CS_CHECKING, CS_OK, CS_UPDATE, CS_NEW, CS_ERROR, CS_UPDATING };
-enum { UPH_NONE, UPH_SIZE, UPH_TAIL, UPH_CD, UPH_CMP, UPH_FETCH, UPH_EXTRACT, UPH_FILEDL, UPH_STAMP };
+enum { UPH_NONE, UPH_SIZE, UPH_TAIL, UPH_CD, UPH_CMP, UPH_FETCH, UPH_EXTRACT, UPH_FILEDL, UPH_STAMP, UPH_FIND };
 
 typedef struct {
 	char name[48], url[360], dest[240], keep[240], src[200], retire[640];
@@ -1313,6 +1313,7 @@ typedef struct {
 	int nneed, nlocal;
 	long long need_c, need_u;
 	char at[24];             /* when GitROMs installed it (UTC), for the reports */
+	char find_repo[100], find_name[160];   /* url "find:owner/repo:Name.gba": the file is looked up by name in the repo's tree, wherever it is committed */
 	uint32_t lcrc;           /* CRC32 of a single file as installed: a later change (damage, a cut-off copy) is noticed */
 	int has_lcrc;
 } Comp;
@@ -1344,6 +1345,16 @@ static void comp_add(const char *name, int kind, const char *url, const char *de
 	scpy(c->name, sizeof c->name, name);
 	c->kind = kind;
 	scpy(c->url, sizeof c->url, url);
+	if (!strncmp(url, "find:", 5)) {
+		const char *col = strchr(url + 5, ':');
+		if (col) {
+			size_t rl = (size_t)(col - (url + 5));
+			if (rl >= sizeof c->find_repo) rl = sizeof c->find_repo - 1;
+			memcpy(c->find_repo, url + 5, rl);
+			c->find_repo[rl] = 0;
+			scpy(c->find_name, sizeof c->find_name, col + 1);
+		}
+	}
 	scpy(c->dest, sizeof c->dest, dest);
 	scpy(c->keep, sizeof c->keep, keep);
 	scpy(c->src, sizeof c->src, src);
@@ -1473,12 +1484,15 @@ static void comps_load(void) {
 		 ".", "", "commit:xenodorian/BibooSGBA:", "sgba/games/parry-perry.sgba,sgba/games/parry-perry,parry-perry", 0, 0},
 		{"Slingshot Orbits", "https://github.com/xenodorian/SGBA/releases/download/latest/slingshot-orbits-port.zip",
 		 ".", "", "commit:xenodorian/SGBA:web_games/slingshot_orbits", "slingshot_orbits.sgba,sgba/games/slingshot_orbits.sgba", 0, 0},
-		{"Pokemon War and Murder", "https://github.com/xenodorian/Pokemon-War-and-Murder/raw/main/roms/Pokemon%20War%20and%20Murder.gba",
-		 "../gba/Pokemon War and Murder.gba", "", "commit:xenodorian/Pokemon-War-and-Murder:roms/Pokemon%20War%20and%20Murder.gba", "", 1, 0},
+		/* The two ROM hacks are found by file name wherever they are committed in their repos; until the file exists the entry says
+		 * "Not published yet". The ROM goes to the gba folder under the same name without accents. */
+		{"Pokemon War and Murder", "find:xenodorian/Pokemon-War-and-Murder:Pok\xc3\xa9monWarAndMurder.gba", "../gba/PokemonWarAndMurder.gba", "", "", "", 1, 0},
+		{"Pokemon Fire Emblem", "find:xenodorian/PoekEmblem:PokemblemTheSacredStones.gba", "../gba/PokemblemTheSacredStones.gba", "", "", "", 1, 0},
 	};
 	/* Entries of older components.conf files that a built-in entry replaced. */
 	static const char *obsolete[] = {
 		"https://github.com/xenodorian/BibooSGBA/releases/download/latest/parry-perry.sgba",
+		"https://github.com/xenodorian/Pokemon-War-and-Murder/raw/main/roms/Pokemon%20War%20and%20Murder.gba",   /* replaced by the find: entry; the old ROM on the card is left alone */
 	};
 	if (!getenv("GITROMS_NODEFAULTS"))
 		for (int i = 0; i < ncomp;) {
@@ -1581,8 +1595,8 @@ static int up_job(const Comp *c, const char *outname, long long a, long long b, 
 
 static void up_cleanup_tmp(void) {
 	char p[480];
-	static const char *fixed[] = {"up.size", "up.hdr", "up.tail", "up.cd", "up.err", "up.stamp"};
-	for (int i = 0; i < 6; i++) { up_tmp(p, sizeof p, fixed[i]); remove(p); }
+	static const char *fixed[] = {"up.size", "up.hdr", "up.tail", "up.cd", "up.err", "up.stamp", "up.tree"};
+	for (int i = 0; i < 7; i++) { up_tmp(p, sizeof p, fixed[i]); remove(p); }
 	for (int i = 0; i < 40; i++) { char n[24]; snprintf(n, sizeof n, "up.r%d", i); up_tmp(p, sizeof p, n); remove(p); }
 	free(up.tail);
 	up.tail = NULL;
@@ -1705,8 +1719,86 @@ static void up_begin_update(Comp *c) {
 	up.phase = UPH_FETCH;
 }
 
+/* File names compared loosely: case and accents do not matter ("PokémonWarAndMurder.gba" is "PokemonWarAndMurder.gba"), spaces do. */
+static int name_fold(const char *s, int i, int *adv) {
+	unsigned char c = (unsigned char)s[i];
+	if (c == 0xC3 && ((unsigned char)s[i + 1] == 0xA9 || (unsigned char)s[i + 1] == 0x89 || (unsigned char)s[i + 1] == 0xA8 || (unsigned char)s[i + 1] == 0x88)) { *adv = 2; return 'e'; }
+	*adv = 1;
+	return tolower(c);
+}
+
+static int name_match(const char *a, const char *b) {
+	int i = 0, j = 0;
+	while (a[i] && b[j]) {
+		int ai, bj;
+		if (name_fold(a, i, &ai) != name_fold(b, j, &bj)) return 0;
+		i += ai;
+		j += bj;
+	}
+	return !a[i] && !b[j];
+}
+
+static void up_after_find(Comp *c) {
+	char tp[480];
+	up_tmp(tp, sizeof tp, "up.tree");
+	size_t n = 0;
+	char *body = read_file(tp, 6 * 1024 * 1024, &n);
+	J *root = body ? json_parse(body, n) : NULL;
+	J *tree = root ? jget(root, "tree") : NULL;
+	char best[400] = "";
+	int found = 0;
+	for (J *e = tree ? tree->kids : NULL; e; e = e->next) {
+		const char *type = jstr(e, "type"), *path = jstr(e, "path");
+		if (!type || !path || strcmp(type, "blob")) continue;
+		const char *base = strrchr(path, '/');
+		base = base ? base + 1 : path;
+		if (!name_match(base, c->find_name)) continue;
+		found++;
+		if (!best[0] || strlen(path) < strlen(best)) scpy(best, sizeof best, path);     /* nearest the top of the repo if there are several */
+	}
+	J *tr = root ? jget(root, "truncated") : NULL;
+	int truncated = tr && tr->t == 1 && tr->n != 0;
+	j_free(root);
+	free(body);
+	remove(tp);
+	if (!found) {
+		char m[200];
+		if (truncated) snprintf(m, sizeof m, "Cannot search %s: the file list is too large", c->find_repo);
+		else snprintf(m, sizeof m, "Not published yet: no %s in %s", c->find_name, c->find_repo);
+		logf_("update check %s: %s (looked for %s in %s)", c->name, m, c->find_name, c->find_repo);
+		c->pretty[0] = 0;
+		up_finish_comp(c, CS_OK, m);
+		return;
+	}
+	char enc[900], raw[1000];
+	const char *rb = getenv("GITROMS_RAW");
+	url_path(enc, sizeof enc, best);
+	snprintf(raw, sizeof raw, "%s/%s/raw/main/%s", rb && *rb ? rb : "https://github.com", c->find_repo, enc);
+	scpy(c->url, sizeof c->url, raw);
+	snprintf(c->src, sizeof c->src, "commit:%s:%s", c->find_repo, enc);
+	logf_("update check %s: found %s at %s (%d match%s)", c->name, c->find_name, best, found, found == 1 ? "" : "es");
+	snprintf(up.step, sizeof up.step, "Checking %s", c->name);
+	if (!up_job(c, "up.size", 0, 0, "up.hdr", 4096, 60)) { up_fail(c, "Could not start curl."); return; }
+	up.phase = UPH_SIZE;
+}
+
 static void up_begin(Comp *c) {
 	if (up.mode == 1) { up_begin_update(c); return; }
+	if (!strncmp(c->url, "find:", 5) && c->find_repo[0]) {                  /* where is the file? ask GitHub for the repo's file list */
+		comp_runtime_free(c);
+		c->status = CS_CHECKING;
+		c->msg[0] = 0;
+		up.cancel = 0;
+		snprintf(up.step, sizeof up.step, "Looking for %s", c->find_name);
+		char url[400], out[480], err[480];
+		snprintf(url, sizeof url, "%s/repos/%s/git/trees/main?recursive=1", g_api, c->find_repo);
+		up_tmp(out, sizeof out, "up.tree");
+		up_tmp(err, sizeof err, "up.err");
+		remove(out);
+		if (!job_start_ex(&up.job, url, out, err, 60, 1, NULL, NULL, 8 * 1024 * 1024)) { up_fail(c, "Could not start curl."); return; }
+		up.phase = UPH_FIND;
+		return;
+	}
 	comp_runtime_free(c);
 	c->status = CS_CHECKING;
 	c->msg[0] = 0;
@@ -2075,6 +2167,11 @@ static void up_step(uint32_t now) {
 		up_after_stamp(c);
 		return;
 	}
+	case UPH_FIND:
+		if (!job_poll(&up.job)) return;
+		if (up.job.rc != 0) { up_fail_job(c); return; }
+		up_after_find(c);
+		return;
 	case UPH_STAMP: {
 		if (!job_poll(&up.job)) return;
 		if (up.job.rc == 0) {                       /* on any failure keep the ETag stamp */

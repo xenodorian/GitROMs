@@ -3,6 +3,7 @@
 Rules: work only on `main` in xenodorian/GitROMs, xenodorian/SGBA and xenodorian/BibooSGBA, no branches. Raw `.sh` files do not run on the device by themselves; only PortMaster-style ports. No tokens in any repo (the token lives only in the user's `gitroms/data/upload.conf`). Full reasoning for each step is in `docs/DECISIONS.md`.
 
 ## Done (newest first)
+- **4.4 (2026-10-17)**: the two ROM hacks are built in and found by name (`PokémonWarAndMurder.gba` in Pokemon-War-and-Murder, `PokemblemTheSacredStones.gba` in PoekEmblem), installed to `gba/` without accents, kept current by commits; "Not published yet" until the files exist. Tests: `updates_test.sh` (68).
 - **4.3 (2026-10-16)**: updates are decided by commits. Every built-in item has a commit source and is offered only when its latest commit is newer than the one recorded at the last install; a changed Last-Modified or a rebuilt release offers nothing; a failed lookup offers nothing; an older date never offers a downgrade. A bundle with differing files but no new commit reads "Repair". The token in `upload.conf` also authenticates these lookups. Reports carry their event time (body and title); reports older than `max_age_days` (default 7) go to `sgba/reports/old/`. `updates.txt` records `at:` (install time), `history.txt` has full dates. The status report adds the per-game logs (`sgba/logs/*.log`) and `/dev/shm/runcommand.log` (unverified on the device). Tests: `updates_test.sh` (62), `reports_test.sh` (14).
 - **4.2 (2026-10-15)**: durable writes. Each new file is fsynced, dropped from the page cache, read back from the card and checked (CRC from the package, or two matching reads for single files) before it replaces the old one; folders are fsynced; `sync()` after an update. A single file records its CRC at install and "Damaged" is reported on a later mismatch. `GitROMs.sh` checks its own program (non-empty, ELF) and repairs it from `dist/gitroms.<arch>` after a SHA-256 match. Reason: on the device the program files were empty or junk (an empty executable "runs" under bash and exits 0, so it looked like a silent crash). Tests: `launcher_test.sh`.
 - **4.1**: every quit logs its cause (`exit: received signal N`, window close, error screen, Exit screen).
@@ -10,14 +11,18 @@ Rules: work only on `main` in xenodorian/GitROMs, xenodorian/SGBA and xenodorian
 - **3.9**: a commit-dated single file no longer shows "changed" forever when the GitHub date lookup fails.
 - SGBA repo (commit 4cb8d01 and earlier): per-game logs `sgba/logs/<game>.log` (session start and end, status every 60 s, errors, CRASH line with epoch, unclean exit), dated stderr lines, crash time in reports, launchers refuse an empty or damaged program or game, double free at game exit fixed (0e5c169), music resampler click fixed (3b493a3), Slingshot stick test. Details in the SGBA `Current_Work.md`.
 
-## Open
-1. **PokeEmblem**: `xenodorian/PoekEmblem` contains only the two commercial base ROMs (FireRed, Fire Emblem: The Sacred Stones). The patched game is built locally and not committed (its notes say ROMs must never be committed). Nothing was added to the updater. Needs the user's decision on which file to publish and where. Pokemon War and Murder: main ROM is `roms/Pokemon War and Murder.gba` (already built in).
-2. **GBA ROM games** run inside ArkOS's own emulator and cannot log their own crashes; only `/dev/shm/runcommand.log` is read, if it exists.
-3. **Device**: user installs `gitroms.aarch64` 4.3 by hand into `ports/gitroms/` (`GitROMs.sh` unchanged since 4.2). The SGBA fixes arrive through the normal update after CI publishes the release. Files damaged on the card (`sgba/sgba`, `games/demo.sgba`, `games/input_lab.sgba`, earlier `gitroms.aarch64`) are found and rewritten by [Check for updates].
-4. The damaged files most likely came from the card being pulled or power lost right after writes (inference, not proven). Advice given: shut the device down fully and eject the card safely.
-5. Bundle updates are not staged in a separate folder; a half-updated bundle heals on the next check (size and CRC of every file).
-6. Manual items for the user: delete the leftover branches `claude/amazing-allen-ua012v` (GitROMs) and `claude/publish-latest-release` (SGBA, BibooSGBA); optionally delete stale BibooSGBA release assets `parry-perry.sgba`, `parry-perry-arkos-aarch64.zip`, `parry-perry-native-arkos-aarch64.zip`.
-7. Still unconfirmed on the device: which axis numbers are the left and right sticks (axes 0 to 3 all register; the report line "axis N first moved" shows it).
+## Open (reviewed 2026-10-17 against the live repos)
+1. **The two ROM files do not exist yet** in any repo (searched all 23 reachable xenodorian repos and every branch). PoekEmblem has `builds/Pokemon FireRed Eirika Leg1..Leg12-*.gba` (latest Leg12-StoryDepth) and its notes now allow committing ROMs; Pokemon-War-and-Murder has `roms/Pokemon War and Murder.gba` (the previous ROM) plus other build files. The updater picks the named files up on the first check after they are committed, wherever they are.
+2. **GBA ROM games** run in ArkOS's own emulator and cannot log their own crashes; only `/dev/shm/runcommand.log` is read, if it exists.
+3. **Device**: no report has reached GitHub since 2026-10-15 05:14 UTC, so nothing about the 4.x builds, the repaired files or the new logs is confirmed on the real R36S. User installs `gitroms.aarch64` 4.4 by hand into `ports/gitroms/`.
+4. **Stale BibooSGBA release assets still exist**: `parry-perry.sgba` (89 downloads), `parry-perry-arkos-aarch64.zip`, `parry-perry-native-arkos-aarch64.zip`. The updater uses `parry-perry-port.zip`. Deleting them is the user's call.
+5. **Old SGBA branches remain**: `claude/dazzling-ptolemy-14p6iy`, `claude/epic-franklin-qljrs1`, `feature/sgba-custom-runtime`, `feature/sgba-package-format` (not touched; the user said to stop using branches).
+6. Bundle updates are not staged in a separate folder; a half-updated bundle heals on the next check.
+7. Which axis numbers are the left and right sticks on the device is unconfirmed.
+
+## Resolved since the last notes
+- The leftover branches `claude/amazing-allen-ua012v` (GitROMs) and `claude/publish-latest-release` (SGBA, BibooSGBA) are gone; GitROMs and BibooSGBA have only `main`.
+- The published SGBA bundle carries the new launcher (damaged-program check, dated lines): the release was rebuilt by CI after commit 4cb8d01.
 
 ## Verification
 All GitROMs suites pass on PC (updates, update, reports, pad, input, smoke, diag, launcher) and the update, reports and update suites also pass under AddressSanitizer and UBSan. SGBA workflows "Native runtime" and "Runtime checks" are green on 4cb8d01. No test of this work has run on the real R36S.

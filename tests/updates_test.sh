@@ -215,5 +215,27 @@ srv /__reset
 gapp "$OPEN;logupd"
 chk "gate: with a token in upload.conf the commit lookups are authenticated" "grep -q 'api: GitHub requests are authenticated' \"$LOG\" && [ \"\$(curl -s --noproxy '*' http://127.0.0.1:$PORT/__stats | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d[\"authed\"]>0 and d[\"authed\"]==d[\"commit_calls\"])')\" = True ]"
 chk "gate: the token never appears in the log" "! grep -q abc123 \"$LOG\""
+# 10. a file found by name: not published yet, then found wherever it is committed (accents and case do not matter), installed, and kept current by commits
+cat > "$T/find.conf" <<CONF
+Hack|file|find:o/r:Pok\xc3\xa9monWarAndMurder.gba|../gba/PokemonWarAndMurder.gba
+CONF
+printf 'Hack|file|find:o/r:Pok\xc3\xa9monWarAndMurder.gba|../gba/PokemonWarAndMurder.gba\n' > "$T/find.conf"
+rm -f "$PORTS/gitroms/data/updates.txt"; mkdir -p "$T/roms/gba"
+fapp() { GITROMS_RAW="http://127.0.0.1:$PORT/o" GITROMS_API="http://127.0.0.1:$PORT" COMPS="$T/find.conf" app "$@"; }
+srv "/__tree?paths=README.md,roms/Pokemon%20War%20and%20Murder.gba,roms/c3_build_base.gba"
+fapp "$OPEN;logupd"
+chk "find: a file that is not in the repo reads 'Not published yet' and offers nothing" "st 0 | grep -q 'st=2' && st 0 | grep -q 'Not published yet' && [ ! -e \"$T/gba/PokemonWarAndMurder.gba\" ]"
+chk "find: the old ROM with spaces in its name is not mistaken for the new file" "! grep -q 'found ' \"$LOG\""
+srv "/__tree?paths=README.md,builds/PokemonWarAndMurder.gba,deep/er/PokemonWarAndMurder.gba"
+srv "/__commit?date=2026-10-14T10:00:00Z"
+fapp "$OPEN;logupd"
+chk "find: once committed (without the accent, in a subfolder) it is found, the nearest to the top wins" "st 0 | grep -q 'st=4' && grep -q 'found Pok.*at builds/PokemonWarAndMurder.gba (2 matches)' \"$LOG\""
+fapp "$OPEN;act=confirm;idle;logupd"
+chk "find: it installs into the gba folder from the resolved path and records the commit date" "[ -s \"$T/gba/PokemonWarAndMurder.gba\" ] && grep -q '^Hack	2026-10-14T10:00:00Z' \"$PORTS/gitroms/data/updates.txt\" && curl -s --noproxy '*' http://127.0.0.1:$PORT/__stats | grep -q 'builds/PokemonWarAndMurder.gba'"
+fapp "$OPEN;logupd"
+chk "find: checked again with no new commit it is up to date" "st 0 | grep -q 'st=2'"
+srv "/__commit?date=2026-10-15T08:00:00Z"
+fapp "$OPEN;logupd"
+chk "find: a newer commit offers the new version" "st 0 | grep -q 'st=3'"
 chk "no fatal errors" "! grep -q FATAL \"$LOG\""
 exit $fail
