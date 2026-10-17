@@ -18,7 +18,6 @@ Rules: work only on `main` in xenodorian/GitROMs, xenodorian/SGBA and xenodorian
 4. **Stale BibooSGBA release assets still exist**: `parry-perry.sgba` (89 downloads), `parry-perry-arkos-aarch64.zip`, `parry-perry-native-arkos-aarch64.zip`. The updater uses `parry-perry-port.zip`. Deleting them is the user's call.
 5. **Old SGBA branches remain**: `claude/dazzling-ptolemy-14p6iy`, `claude/epic-franklin-qljrs1`, `feature/sgba-custom-runtime`, `feature/sgba-package-format` (not touched; the user said to stop using branches).
 6. Bundle updates are not staged in a separate folder; a half-updated bundle heals on the next check.
-7. Which axis numbers are the left and right sticks on the device is unconfirmed.
 
 ## Resolved since the last notes
 - The leftover branches `claude/amazing-allen-ua012v` (GitROMs) and `claude/publish-latest-release` (SGBA, BibooSGBA) are gone; GitROMs and BibooSGBA have only `main`.
