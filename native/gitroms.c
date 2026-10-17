@@ -1486,7 +1486,7 @@ static void comps_load(void) {
 		 ".", "", "commit:xenodorian/SGBA:web_games/slingshot_orbits", "slingshot_orbits.sgba,sgba/games/slingshot_orbits.sgba", 0, 0},
 		/* The two ROM hacks are found by file name wherever they are committed in their repos; until the file exists the entry says
 		 * "Not published yet". The ROM goes to the gba folder under the same name without accents. */
-		{"Pokemon War and Murder", "find:xenodorian/Pokemon-War-and-Murder:Pok\xc3\xa9monWarAndMurder.gba", "../gba/PokemonWarAndMurder.gba", "", "", "", 1, 0},
+		{"Pokemon War and Murder", "find:xenodorian/Pokemon-War-and-Murder:Pok\xc3\xa9monWarAndMurder.gba;Pokemon War and Murder.gba", "../gba/PokemonWarAndMurder.gba", "", "", "", 1, 0},
 		{"Pokemon Fire Emblem", "find:xenodorian/PoekEmblem:PokemblemTheSacredStones.gba", "../gba/PokemblemTheSacredStones.gba", "", "", "", 1, 0},
 	};
 	/* Entries of older components.conf files that a built-in entry replaced. */
@@ -1738,6 +1738,22 @@ static int name_match(const char *a, const char *b) {
 	return !a[i] && !b[j];
 }
 
+/* find_name may list alternatives separated by ';'; returns the position of the first one that matches base, or -1 */
+static int name_rank(const char *base, const char *list) {
+	char one[160];
+	int rank = 0;
+	for (const char *p = list; ; rank++) {
+		const char *bar = strchr(p, ';');
+		size_t l = bar ? (size_t)(bar - p) : strlen(p);
+		if (l >= sizeof one) l = sizeof one - 1;
+		memcpy(one, p, l);
+		one[l] = 0;
+		if (l && name_match(base, one)) return rank;
+		if (!bar) return -1;
+		p = bar + 1;
+	}
+}
+
 static void up_after_find(Comp *c) {
 	char tp[480];
 	up_tmp(tp, sizeof tp, "up.tree");
@@ -1746,15 +1762,16 @@ static void up_after_find(Comp *c) {
 	J *root = body ? json_parse(body, n) : NULL;
 	J *tree = root ? jget(root, "tree") : NULL;
 	char best[400] = "";
-	int found = 0;
+	int found = 0, best_rank = 1 << 20;
 	for (J *e = tree ? tree->kids : NULL; e; e = e->next) {
 		const char *type = jstr(e, "type"), *path = jstr(e, "path");
 		if (!type || !path || strcmp(type, "blob")) continue;
 		const char *base = strrchr(path, '/');
 		base = base ? base + 1 : path;
-		if (!name_match(base, c->find_name)) continue;
+		int rank = name_rank(base, c->find_name);
+		if (rank < 0) continue;
 		found++;
-		if (!best[0] || strlen(path) < strlen(best)) scpy(best, sizeof best, path);     /* nearest the top of the repo if there are several */
+		if (!best[0] || rank < best_rank || (rank == best_rank && strlen(path) < strlen(best))) { scpy(best, sizeof best, path); best_rank = rank; }   /* the preferred name first, then nearest the top of the repo */
 	}
 	J *tr = root ? jget(root, "truncated") : NULL;
 	int truncated = tr && tr->t == 1 && tr->n != 0;

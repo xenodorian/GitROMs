@@ -237,5 +237,14 @@ chk "find: checked again with no new commit it is up to date" "st 0 | grep -q 's
 srv "/__commit?date=2026-10-15T08:00:00Z"
 fapp "$OPEN;logupd"
 chk "find: a newer commit offers the new version" "st 0 | grep -q 'st=3'"
+# 10b. alternative names (a;b): the first name listed wins, the other is used when it is the only one there
+printf 'Hack|file|find:o/r:Pok\xc3\xa9monWarAndMurder.gba;Pokemon War and Murder.gba|../gba/PokemonWarAndMurder.gba\n' > "$T/find.conf"
+rm -f "$PORTS/gitroms/data/updates.txt" "$T/gba/PokemonWarAndMurder.gba"
+srv "/__tree?paths=README.md,roms/Pokemon%20War%20and%20Murder.gba,roms/c3_build_base.gba"
+fapp "$OPEN;logupd"
+chk "find: the second listed name is found when it is the only one in the repo" "st 0 | grep -q 'st=4' && grep -q 'at roms/Pokemon War and Murder.gba (1 match)' \"$LOG\""
+srv "/__tree?paths=roms/Pokemon%20War%20and%20Murder.gba,deep/er/x/PokemonWarAndMurder.gba"
+fapp "$OPEN;logupd"
+chk "find: the first listed name wins over a nearer copy of the second" "grep -q 'at deep/er/x/PokemonWarAndMurder.gba (2 matches)' \"$LOG\""
 chk "no fatal errors" "! grep -q FATAL \"$LOG\""
 exit $fail
