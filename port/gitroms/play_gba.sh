@@ -21,6 +21,64 @@ say() {
 }
 done_() { type pm_finish >/dev/null 2>&1 && pm_finish; exit "${1:-0}"; }
 
+# Pokemon War and Murder stored its own RetroArch remap (PokemonWarAndMurder.rmp).
+# Other games have none, and that file is what this one boots with. Launching it under a
+# new name makes RetroArch treat it as a game with no profile. The in-game save is the
+# same file either way.
+fresh_war_profile() {
+  old=PokemonWarAndMurder
+  new=WarAndMurder
+  park="$GAMEDIR/data/profile-off"
+  mkdir -p "$park"
+  for root in "${HOME:-}/.config/retroarch/config" /home/ark/.config/retroarch/config /roms/gamedata/retroarch/config; do
+    [ -d "$root" ] || continue
+    find "$root" -type f \( -name "${old}.rmp" -o -name "${old}.cfg" \) -print | while read -r f; do
+      log "park profile $f"
+      mv -f "$f" "$park/${old}-$(basename "$(dirname "$f")")-$(basename "$f")"
+    done
+  done
+  ln -sfn "$ROM" "$GAMEDIR/data/${new}.gba"
+  romsaves="$(dirname "$(dirname "$ROM")")/saves"
+  for sroot in "${HOME:-}/.config/retroarch/saves" /home/ark/.config/retroarch/saves "$romsaves" /roms/saves /roms2/saves "$(dirname "$ROM")"; do
+    [ -d "$sroot" ] || continue
+    find "$sroot" -type f -name "${old}.*" -print | while read -r f; do
+      base="$(basename "$f")"
+      case "$base" in
+        *.srm|*.sav|*.rtc|*.state|*.state*) ;;
+        *) continue ;;
+      esac
+      dest="$(dirname "$f")/${new}${base#"$old"}"
+      ln -f "$f" "$dest" 2>/dev/null || cp -a "$f" "$dest"
+      log "save linked $dest"
+    done
+  done
+  echo "$GAMEDIR/data/${new}.gba"
+}
+
+# After a session under the new name, copy a save back onto the original name if it
+# is not already the same file. A hardlink needs nothing done.
+sync_war_save() {
+  old=PokemonWarAndMurder
+  new=WarAndMurder
+  romsaves="$(dirname "$(dirname "$ROM")")/saves"
+  for sroot in "${HOME:-}/.config/retroarch/saves" /home/ark/.config/retroarch/saves "$romsaves" /roms/saves /roms2/saves "$(dirname "$ROM")"; do
+    [ -d "$sroot" ] || continue
+    find "$sroot" -type f -name "${new}.*" -print | while read -r f; do
+      base="$(basename "$f")"
+      case "$base" in
+        *.srm|*.sav|*.rtc|*.state|*.state*) ;;
+        *) continue ;;
+      esac
+      dest="$(dirname "$f")/${old}${base#"$new"}"
+      if [ -f "$dest" ] && [ "$(stat -c %i "$f" 2>/dev/null)" = "$(stat -c %i "$dest" 2>/dev/null)" ]; then
+        continue
+      fi
+      cp -a "$f" "$dest"
+      log "save copied back $dest"
+    done
+  done
+}
+
 log "start: $TITLE rom=$ROM"
 if [ ! -s "$ROM" ]; then
   log "rom missing or empty"
@@ -28,7 +86,14 @@ if [ ! -s "$ROM" ]; then
   sleep 6; done_ 1
 fi
 
+LAUNCH="$ROM"
+if [ "$ROMFILE" = "PokemonWarAndMurder.gba" ]; then
+  LAUNCH="$(fresh_war_profile)"
+fi
+log "launch: $LAUNCH"
+
 run_logged() { log "run: $*"; ( eval "$@" ) >> "$LOG" 2>&1; rc=$?; log "exit code $rc"; return $rc; }
+run_play() { run_logged "$1"; rc=$?; [ "$ROMFILE" = "PokemonWarAndMurder.gba" ] && sync_war_save; return $rc; }
 
 # 1. The command EmulationStation uses for the gba system.
 CFG=""
@@ -37,13 +102,13 @@ for f in "${ES_SYSTEMS_CFG:-}" /etc/emulationstation/es_systems.cfg "$HOME/.emul
 done
 CMD=""
 if [ -n "$CFG" ]; then
-  CMD="$(awk '/<system>/{blk=""} {blk=blk $0 "\n"} /<\/system>/{ if (blk ~ /<name>gba<\/name>/ && match(blk, /<command>[^<]*<\/command>/)) { s=substr(blk, RSTART+9, RLENGTH-19); print s; exit } }' < <(sed 's/<system>/\n<system>/g' "$CFG"))"
+  CMD="$(sed 's/<system>/\n<system>/g' "$CFG" | awk '/<system>/{blk=""} {blk=blk $0 "\n"} /<\/system>/{ if (blk ~ /<name>gba<\/name>/ && match(blk, /<command>[^<]*<\/command>/)) { s=substr(blk, RSTART+9, RLENGTH-19); print s; exit } }')"
 fi
 log "es_systems: ${CFG:-none}; command: ${CMD:-none}"
 if [ -n "$CMD" ] && ! echo "$CMD" | grep -q '%EMULATOR%\|%CORE%\|%INJECT%\|%SYSTEM%\|%GAMEDIR%'; then
-  q="'${ROM//\'/\'\\\'\'}'"
-  CMD="${CMD//%ROM_RAW%/$ROM}"; CMD="${CMD//%ROM%/$q}"; CMD="${CMD//%BASENAME%/$(basename "$ROMFILE" .gba)}"
-  run_logged "$CMD" && done_ 0
+  q="'${LAUNCH//\'/\'\\\'\'}'"
+  CMD="${CMD//%ROM_RAW%/$LAUNCH}"; CMD="${CMD//%ROM%/$q}"; CMD="${CMD//%BASENAME%/$(basename "$LAUNCH" .gba)}"
+  run_play "$CMD" && done_ 0
   log "es command failed, trying RetroArch"
 fi
 
@@ -58,7 +123,7 @@ for d in "$HOME/.config/retroarch/cores" /home/ark/.config/retroarch/cores /opt/
 done
 log "retroarch: ${RA:-none} core: ${CORE:-none}"
 if [ -n "$RA" ] && [ -n "$CORE" ]; then
-  run_logged "\"$RA\" -L \"$CORE\" \"$ROM\"" && done_ 0
+  run_play "\"$RA\" -L \"$CORE\" \"$LAUNCH\"" && done_ 0
 fi
 say "Could not start $TITLE. See gitroms/data/play.log, or start it from the GBA system."
 sleep 6; done_ 1
