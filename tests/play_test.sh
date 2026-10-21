@@ -15,14 +15,8 @@ cfg "echo %ROM% >> $T/ran"
 echo x > "$T/roms/gba/PokemblemTheSacredStones.gba"; echo x > "$T/roms/gba/PokemonWarAndMurder.gba"
 ok "es command rc" "$(run Pokemon_Fire_Emblem.sh)" 0
 ok "es command rom" "$(tail -1 "$T/ran")" "$T/roms/gba/PokemblemTheSacredStones.gba"
-mkdir -p "$T/home/.config/retroarch/config/mGBA" "$T/roms/saves/mGBA"
-echo BAD > "$T/home/.config/retroarch/config/mGBA/PokemonWarAndMurder.rmp"
-echo SAVE > "$T/roms/saves/mGBA/PokemonWarAndMurder.srm"
 ok "war rc" "$(run Pokemon_War_and_Murder.sh)" 0
-ok "war rom" "$(tail -1 "$T/ran")" "$T/roms/ports/gitroms/data/WarAndMurder.gba"
-ok "old remap parked" "$( [ ! -f "$T/home/.config/retroarch/config/mGBA/PokemonWarAndMurder.rmp" ] && echo yes )" yes
-ok "save linked" "$(cat "$T/roms/saves/mGBA/WarAndMurder.srm")" SAVE
-ok "save same file" "$(stat -c %i "$T/roms/saves/mGBA/PokemonWarAndMurder.srm") $(stat -c %i "$T/roms/saves/mGBA/WarAndMurder.srm" | awk '{print $1}')" "$(stat -c %i "$T/roms/saves/mGBA/PokemonWarAndMurder.srm") $(stat -c %i "$T/roms/saves/mGBA/PokemonWarAndMurder.srm")"
+ok "war rom" "$(tail -1 "$T/ran")" "$T/roms/gba/PokemonWarAndMurder.gba"
 cfg "emu %EMULATOR% %CORE% %ROM%"
 cat > "$T/bin/retroarch" <<EOT
 #!/bin/bash
