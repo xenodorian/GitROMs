@@ -12,11 +12,16 @@ run() { ES_SYSTEMS_CFG="$T/es.cfg" HOME="$T/home" bash "$P/$1" >/dev/null 2>&1; 
 
 ok "missing rom" "$(run Pokemon_Fire_Emblem.sh)" 1
 cfg "echo %ROM% >> $T/ran"
-echo x > "$T/roms/gba/PokemblemTheSacredStones.gba"; echo x > "$T/roms/gba/PokemonWarAndMurder.gba"
+echo x > "$T/roms/gba/PokemblemTheSacredStones.gba"; echo x > "$T/roms/gba/PokemonWarAndMurder.gba"; echo x > "$T/roms/gba/Pokemon War.gba"
 ok "es command rc" "$(run Pokemon_Fire_Emblem.sh)" 0
 ok "es command rom" "$(tail -1 "$T/ran")" "$T/roms/gba/PokemblemTheSacredStones.gba"
 ok "war rc" "$(run Pokemon_War_and_Murder.sh)" 0
 ok "war rom" "$(tail -1 "$T/ran")" "$T/roms/gba/PokemonWarAndMurder.gba"
+ok "pokemon war rc" "$(run "Pokemon War.sh")" 0
+ok "pokemon war rom" "$(tail -1 "$T/ran")" "$T/roms/gba/Pokemon War.gba"
+seed=1
+[ -s "$T/roms/gba/Pokemon War.srm" ] && [ -s "$T/roms/gba/Pokemon War.state" ] && seed=0
+ok "pokemon war save seeded" "$seed" 0
 cfg "emu %EMULATOR% %CORE% %ROM%"
 cat > "$T/bin/retroarch" <<EOT
 #!/bin/bash

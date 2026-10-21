@@ -1486,6 +1486,7 @@ static void comps_load(void) {
 		 ".", "", "commit:xenodorian/SGBA:web_games/slingshot_orbits", "slingshot_orbits.sgba,sgba/games/slingshot_orbits.sgba", 0, 0},
 		/* One release ROM. The name is exact aside from case and accents. There is no second filename, so a stale copy cannot be chosen. */
 		{"Pokemon War and Murder", "find:xenodorian/Pokemon-War-and-Murder:PokemonWarAndMurder.gba", "../gba/PokemonWarAndMurder.gba", "", "", "", 1, 0},
+		{"Pokemon War", "find:xenodorian/Pokemon-War-and-Murder:Pokemon War.gba", "../gba/Pokemon War.gba", "", "", "", 1, 0},
 		{"Pokemon Fire Emblem", "find:xenodorian/PoekEmblem:PokemblemTheSacredStones.gba", "../gba/PokemblemTheSacredStones.gba", "", "", "", 1, 0},
 	};
 	/* Entries of older components.conf files that a built-in entry replaced. */

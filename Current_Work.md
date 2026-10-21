@@ -3,6 +3,7 @@
 Rules: work only on `main` in xenodorian/GitROMs, xenodorian/SGBA and xenodorian/BibooSGBA, no branches. Raw `.sh` files do not run on the device by themselves; only PortMaster-style ports. No tokens in any repo (the token lives only in the user's `gitroms/data/upload.conf`). Full reasoning for each step is in `docs/DECISIONS.md`.
 
 ## Done (newest first)
+- **4.7 (2026-10-21)**: Pokemon War is its own game. The uploader looks up `Pokemon War.gba` in xenodorian/Pokemon-War-and-Murder and installs it as `gba/Pokemon War.gba`. `Pokemon War.sh` is a separate Ports entry. On first launch it copies `Pokemon War.srm` and `Pokemon War.state` next to that ROM if they are not already there. Pokemon War and Murder is unchanged.
 - **4.6 (2026-10-21)**: Reverted. Launching Pokemon War and Murder as `WarAndMurder.gba` stopped the game from booting. The ports launcher again starts `gba/PokemonWarAndMurder.gba` directly.
 - **4.5 (2026-10-21)**: Pokemon War and Murder has one lookup, `PokemonWarAndMurder.gba` in xenodorian/Pokemon-War-and-Murder. The old fallback name `Pokemon War and Murder.gba` is obsolete, so a second ROM in the repo cannot be selected. It still installs to `gba/PokemonWarAndMurder.gba`.
 - **4.4 (2026-10-17)**: the two ROM hacks are built in and found by name (`PokémonWarAndMurder.gba` in Pokemon-War-and-Murder, `PokemblemTheSacredStones.gba` in PoekEmblem), installed to `gba/` without accents, kept current by commits; "Not published yet" until the files exist. Tests: `updates_test.sh` (68).
