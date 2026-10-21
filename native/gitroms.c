@@ -1484,15 +1484,15 @@ static void comps_load(void) {
 		 ".", "", "commit:xenodorian/BibooSGBA:", "sgba/games/parry-perry.sgba,sgba/games/parry-perry,parry-perry", 0, 0},
 		{"Slingshot Orbits", "https://github.com/xenodorian/SGBA/releases/download/latest/slingshot-orbits-port.zip",
 		 ".", "", "commit:xenodorian/SGBA:web_games/slingshot_orbits", "slingshot_orbits.sgba,sgba/games/slingshot_orbits.sgba", 0, 0},
-		/* The two ROM hacks are found by file name wherever they are committed in their repos; until the file exists the entry says
-		 * "Not published yet". The ROM goes to the gba folder under the same name without accents. */
-		{"Pokemon War and Murder", "find:xenodorian/Pokemon-War-and-Murder:Pok\xc3\xa9monWarAndMurder.gba;Pokemon War and Murder.gba", "../gba/PokemonWarAndMurder.gba", "", "", "", 1, 0},
+		/* One release ROM. The name is exact aside from case and accents. There is no second filename, so a stale copy cannot be chosen. */
+		{"Pokemon War and Murder", "find:xenodorian/Pokemon-War-and-Murder:PokemonWarAndMurder.gba", "../gba/PokemonWarAndMurder.gba", "", "", "", 1, 0},
 		{"Pokemon Fire Emblem", "find:xenodorian/PoekEmblem:PokemblemTheSacredStones.gba", "../gba/PokemblemTheSacredStones.gba", "", "", "", 1, 0},
 	};
 	/* Entries of older components.conf files that a built-in entry replaced. */
 	static const char *obsolete[] = {
 		"https://github.com/xenodorian/BibooSGBA/releases/download/latest/parry-perry.sgba",
 		"https://github.com/xenodorian/Pokemon-War-and-Murder/raw/main/roms/Pokemon%20War%20and%20Murder.gba",   /* replaced by the find: entry; the old ROM on the card is left alone */
+		"find:xenodorian/Pokemon-War-and-Murder:Pok\xc3\xa9monWarAndMurder.gba;Pokemon War and Murder.gba",   /* the fallback name could select a stale copy */
 	};
 	if (!getenv("GITROMS_NODEFAULTS"))
 		for (int i = 0; i < ncomp;) {

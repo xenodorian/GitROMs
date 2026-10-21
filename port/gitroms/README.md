@@ -78,7 +78,7 @@ Parry Perry is its own package: `Parry Perry.sh` plus one compiled file,
 install GitROMs deletes the older copies (in `sgba/games/` and the loose `parry-perry/`
 folder) so the game never exists in two places.
 
-The Pokemon War and Murder is built in: it is saved as `gba/Pokemon War and Murder.gba`
+The Pokemon War and Murder is built in: it is saved as `gba/PokemonWarAndMurder.gba`
 next to your other GBA games. Save states are tied to the exact ROM, so after an
 update an old `.state` may not load; in-game saves are not touched.
 
