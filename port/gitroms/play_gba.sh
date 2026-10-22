@@ -19,6 +19,27 @@ say() {
   echo "$*"
   if type pm_message >/dev/null 2>&1; then pm_message "$*"; else echo "$*" > /dev/tty1 2>/dev/null; fi
 }
+# Lift a controller report the game stored in the save into sgba/reports.
+extract_report() {
+  local sav="" cand
+  for cand in "${ROM%.gba}.srm" "${ROM%.gba}.sav"; do
+    [ -f "$cand" ] && sav="$cand" && break
+  done
+  [ -n "$sav" ] || return 0
+  local out="$PORTSDIR/sgba/reports"
+  mkdir -p "$out"
+  python3 - "$sav" "$out" <<'PY' 2>/dev/null || true
+import sys, time
+data = open(sys.argv[1], "rb").read()
+i = data.find(b"PWAMRPT")
+if i < 0:
+    raise SystemExit
+chunk = data[i:i+200]
+open("%s/controller-%d.txt" % (sys.argv[2], int(time.time())), "w").write(
+    "Pokemon War and Murder controller report\n" + chunk.split(b"\x00", 1)[0].decode("latin1", "replace") + "\n")
+PY
+}
+
 done_() { type pm_finish >/dev/null 2>&1 && pm_finish; exit "${1:-0}"; }
 
 log "start: $TITLE rom=$ROM"
@@ -43,7 +64,7 @@ log "es_systems: ${CFG:-none}; command: ${CMD:-none}"
 if [ -n "$CMD" ] && ! echo "$CMD" | grep -q '%EMULATOR%\|%CORE%\|%INJECT%\|%SYSTEM%\|%GAMEDIR%'; then
   q="'${ROM//\'/\'\\\'\'}'"
   CMD="${CMD//%ROM_RAW%/$ROM}"; CMD="${CMD//%ROM%/$q}"; CMD="${CMD//%BASENAME%/$(basename "$ROMFILE" .gba)}"
-  run_logged "$CMD" && done_ 0
+  run_logged "$CMD" && { extract_report; done_ 0; }
   log "es command failed, trying RetroArch"
 fi
 
@@ -58,7 +79,7 @@ for d in "$HOME/.config/retroarch/cores" /home/ark/.config/retroarch/cores /opt/
 done
 log "retroarch: ${RA:-none} core: ${CORE:-none}"
 if [ -n "$RA" ] && [ -n "$CORE" ]; then
-  run_logged "\"$RA\" -L \"$CORE\" \"$ROM\"" && done_ 0
+  run_logged "\"$RA\" -L \"$CORE\" \"$ROM\"" && { extract_report; done_ 0; }
 fi
 say "Could not start $TITLE. See gitroms/data/play.log, or start it from the GBA system."
 sleep 6; done_ 1
