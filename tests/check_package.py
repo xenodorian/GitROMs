@@ -23,7 +23,7 @@ with zipfile.ZipFile(ZIP) as z:
     check("GitROMs.sh" in names, "launcher is at zip root (lands directly in ports/)")
     check(all(n.startswith("gitroms/") or (n.endswith(".sh") and "/" not in n) for n in names), "package is launchers plus the gitroms folder")
     for sh in [n for n in names if n.endswith(".sh") and "/" not in n]:
-        check(sh in ("GitROMs.sh", "Pokemon_War_and_Murder.sh", "Pokemon War.sh", "Pokemon_Fire_Emblem.sh"), f"known launcher {sh}")
+        check(sh in ("GitROMs.sh", "Pokemon_War_and_Murder.sh", "Pokemon_Fire_Emblem.sh"), f"known launcher {sh}")
     for need in ["gitroms/gitroms.aarch64", "gitroms/gitroms.armhf", "gitroms/gitroms.gptk",
                  "gitroms/gitroms.conf", "gitroms/components.conf", "gitroms/collect.sh", "gitroms/port.json", "gitroms/README.md"]:
         check(need in names, f"contains {need}")
@@ -47,7 +47,7 @@ with zipfile.ZipFile(ZIP) as z:
     z.extractall(tmp)
 
 check(subprocess.run(["bash", "-n", os.path.join(tmp, "GitROMs.sh")]).returncode == 0, "launcher passes bash -n")
-for sh in ["Pokemon_War_and_Murder.sh", "Pokemon War.sh", "Pokemon_Fire_Emblem.sh"]:
+for sh in ["Pokemon_War_and_Murder.sh", "Pokemon_Fire_Emblem.sh"]:
     check(subprocess.run(["bash", "-n", os.path.join(tmp, sh)]).returncode == 0, f"{sh} passes bash -n")
 
 for arch, objdump, machine in [("aarch64", "aarch64-linux-gnu-objdump", "aarch64"), ("armhf", "arm-linux-gnueabihf-objdump", "arm")]:

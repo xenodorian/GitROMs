@@ -1486,7 +1486,6 @@ static void comps_load(void) {
 		 ".", "", "commit:xenodorian/SGBA:web_games/slingshot_orbits", "slingshot_orbits.sgba,sgba/games/slingshot_orbits.sgba", 0, 0},
 		/* One release ROM. The name is exact aside from case and accents. There is no second filename, so a stale copy cannot be chosen. */
 		{"Pokemon War and Murder", "find:xenodorian/Pokemon-War-and-Murder:PokemonWarAndMurder.gba", "../gba/PokemonWarAndMurder.gba", "", "", "", 1, 0},
-		{"Pokemon War", "find:xenodorian/Pokemon-War-and-Murder:Pokemon War.gba", "../gba/Pokemon War.gba", "", "", "", 1, 0},
 		{"Pokemon Fire Emblem", "find:xenodorian/PoekEmblem:PokemblemTheSacredStones.gba", "../gba/PokemblemTheSacredStones.gba", "", "", "", 1, 0},
 	};
 	/* Entries of older components.conf files that a built-in entry replaced. */
@@ -1494,6 +1493,7 @@ static void comps_load(void) {
 		"https://github.com/xenodorian/BibooSGBA/releases/download/latest/parry-perry.sgba",
 		"https://github.com/xenodorian/Pokemon-War-and-Murder/raw/main/roms/Pokemon%20War%20and%20Murder.gba",   /* replaced by the find: entry; the old ROM on the card is left alone */
 		"find:xenodorian/Pokemon-War-and-Murder:Pok\xc3\xa9monWarAndMurder.gba;Pokemon War and Murder.gba",   /* the fallback name could select a stale copy */
+		"find:xenodorian/Pokemon-War-and-Murder:Pokemon War.gba",   /* removed 2026-10-22: one release name only; the ROM already on a card is left alone */
 	};
 	if (!getenv("GITROMS_NODEFAULTS"))
 		for (int i = 0; i < ncomp;) {
