@@ -2467,6 +2467,11 @@ static int rp_build(int idx, char *title, size_t tn) {
 	} else {
 		char p[560];
 		fprintf(o, "GitROMs status report\nversion: %s\ntime: %s\ndevice: %s\nhome: %s\nports: %s\n", VERSION, when, host, g_home, g_ports);
+		snprintf(p, sizeof p, "%s/last_controller.txt", g_home);       /* the newest controller report from the game's save, whole */
+		{
+			char *ct = read_file(p, 12000, NULL);
+			if (ct) { fprintf(o, "\n--- last_controller.txt (the newest controller report read from the game's save) ---\n%s", ct); free(ct); }
+		}
 		snprintf(p, sizeof p, "%s/lift.log", g_home);                  /* what the launcher found in the game's save: first, so it is never cut */
 		rp_tail(o, p, 12, "lift.log (controller report lifted from the save)");
 		snprintf(p, sizeof p, "%s/play.log", g_home);

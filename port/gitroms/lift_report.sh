@@ -62,13 +62,21 @@ lift_report() {
   local body
   body="$(LC_ALL=C tr '\000' '\n' < "$sav" 2>/dev/null | LC_ALL=C sed -n '/^PWAMRPT/,/^$/{/^$/q;p;}' 2>/dev/null | head -c 3000)"
   if [ -z "$body" ]; then lift_log "save $sav ($(wc -c < "$sav") bytes): no report in it"; return 0; fi
-  local sum last="$GAMEDIR/data/last_report.sum" out="$PORTSDIR/sgba/reports"
+  local sum last="$GAMEDIR/data/last_report.sum" out="$PORTSDIR/sgba/reports" text="$GAMEDIR/data/last_controller.txt" prev="" prevname=""
   sum="$(printf '%s' "$body" | cksum | cut -d' ' -f1,2)"
-  if [ -f "$last" ] && [ "$(cat "$last" 2>/dev/null)" = "$sum" ]; then lift_log "save $sav: report already lifted"; return 0; fi
-  mkdir -p "$out"
-  { echo "Pokemon War and Murder controller report"
+  # The whole report is always kept in data/last_controller.txt; [Send reports] puts it at the top of the status report, so it arrives
+  # even if the separate controller-*.txt file is missing.
+  { echo "Pokemon War and Murder controller report (read from $sav, $(date '+%Y-%m-%d %H:%M:%S'))"
     echo "How to read it: the game logs the raw GBA key register every frame while the player presses A, then B (0001 = GBA A, 0002 = GBA B). A different bit or nothing means ArkOS / RetroArch maps that button elsewhere; the launcher part below shows the mapping."
     echo "$body"
-    sysinfo | head -c 6000; } > "$out/controller-$(date +%s).txt" 2>/dev/null && echo "$sum" > "$last"
-  lift_log "save $sav: report lifted to $out ($(printf '%s' "$body" | wc -c) bytes)"
+    sysinfo | head -c 6000; } > "$text" 2>/dev/null
+  [ -f "$last" ] && { prev="$(cut -d' ' -f1,2 "$last" 2>/dev/null)"; prevname="$(cut -d' ' -f3 "$last" 2>/dev/null)"; }
+  # "already lifted" only counts while the file made then is still there (waiting, sent or set aside)
+  if [ "$prev" = "$sum" ] && [ -n "$prevname" ] && { [ -f "$out/$prevname" ] || [ -f "$out/sent/$prevname" ] || [ -f "$out/old/$prevname" ]; }; then
+    lift_log "save $sav: report already lifted as $prevname ($(ls "$out" 2>/dev/null | tr '\n' ' ')| sent: $(ls "$out/sent" 2>/dev/null | tr '\n' ' '))"; return 0
+  fi
+  mkdir -p "$out"
+  local name="controller-$(date +%s).txt"
+  cp "$text" "$out/$name" 2>/dev/null && echo "$sum $name" > "$last"
+  lift_log "save $sav: report lifted as $name to $out ($(printf '%s' "$body" | wc -c) bytes)"
 }

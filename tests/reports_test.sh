@@ -27,7 +27,7 @@ OPEN="idle;act=confirm;act=confirm"       # placeholder, replaced below
 printf 'SGBA report: crash\nbuild: abc\nsignal: 11 "quoted" \\ back\nline two\n' > "$R/crash-$D-100000.txt"
 printf 'SGBA report: unclean\nbuild: abc\n' > "$R/unclean-$D-090000.txt"
 printf '2026-10-14 10:00:00 game=x secs=10 fps=59.9\n' > "$R/sessions.log"
-printf 'lift marker: save has a report\n' > "$H/lift.log"; printf 'play marker: started from the Ports entry\n' > "$H/play.log"
+printf 'PWAMRPT v2\nA press: controller marker\n' > "$H/last_controller.txt"; printf 'lift marker: save has a report\n' > "$H/lift.log"; printf 'play marker: started from the Ports entry\n' > "$H/play.log"
 printf 'sgba launch log line\n' > "$PORTS/sgba/sgba_launch.log"; printf 'sgba log line\n' > "$PORTS/sgba/sgba.log"
 # the root list needs the GitHub user listing; with the API pointed at the mock it returns 404 -> error screen, so open the
 # reports screen through the test hook instead
@@ -45,6 +45,7 @@ app "$OPEN;act=confirm;idle;logrp"
 chk "3 issues posted" "[ \"\$(posts | python3 -c 'import sys,json;print(len(json.load(sys.stdin)))')\" = 3 ]"
 chk "posted to the configured repo with the app user agent" "posts | python3 -c 'import sys,json;d=json.load(sys.stdin);raise SystemExit(0 if all(p[\"path\"]==\"/repos/owner/repo/issues\" and p[\"ua\"].startswith(\"GitROMs\") for p in d) else 1)'"
 chk "crash body arrived intact (quotes, backslash, newlines)" "posts | python3 -c 'import sys,json;d=json.load(sys.stdin);b=[p for p in d if p[\"title\"].startswith(\"[crash]\")][0][\"body\"];raise SystemExit(0 if b.startswith(\"Event time: \") and \"SGBA report: crash\\nbuild: abc\\nsignal: 11 \\\"quoted\\\" \\\\ back\\nline two\" in b else 1)'"
+chk "status report carries the whole last controller report" "posts | python3 -c 'import sys,json;d=json.load(sys.stdin);b=[p for p in d if p[\"title\"].startswith(\"[status]\")][0][\"body\"];raise SystemExit(0 if \"A press: controller marker\" in b else 1)'"
 chk "status report carries lift.log and play.log (what the launcher found in the save)" "posts | python3 -c 'import sys,json;d=json.load(sys.stdin);b=[p for p in d if p[\"title\"].startswith(\"[status]\")][0][\"body\"];raise SystemExit(0 if all(k in b for k in (\"lift marker: save has a report\",\"play marker: started from the Ports entry\")) else 1)'"
 chk "status report carries the launch log, sgba.log, sessions and gitroms.log" "posts | python3 -c 'import sys,json;d=json.load(sys.stdin);b=[p for p in d if p[\"title\"].startswith(\"[status]\")][0][\"body\"];raise SystemExit(0 if all(k in b for k in (\"sgba launch log line\",\"sgba log line\",\"fps=59.9\",\"GitROMs 4.4 start\",\"version: 4.4\")) else 1)'"
 chk "sent files moved into sent/, sessions.log stays" "[ ! -e \"$R/crash-$D-100000.txt\" ] && [ -f \"$R/sent/crash-$D-100000.txt\" ] && [ -f \"$R/sessions.log\" ]"
