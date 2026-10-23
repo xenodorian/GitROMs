@@ -70,4 +70,11 @@ printf 'repo=owner/repo\ntoken=secret123\nmax_age_days=7\n' > "$H/upload.conf"
 app "$OPEN;act=confirm;idle;logrp"
 chk "an old report is set aside in reports/old and not posted" "[ -e \"$R/old/crash-1700000000.txt\" ] && [ ! -e \"$R/crash-1700000000.txt\" ] && ! posts | grep -q 'build: old'"
 chk "a recent report is posted with its event time in the body and the title" "posts | python3 -c 'import sys,json;d=json.load(sys.stdin);r=[p for p in d if \"build: recent\" in p[\"body\"]];raise SystemExit(0 if r and r[0][\"body\"].startswith(\"Event time: 20\") and r[0][\"title\"].startswith(\"[crash]\") else 1)'"
+
+# 8. a report larger than 56 KB is posted cut, not as an empty body (the controller report once arrived empty)
+python3 -c "print('PWAMRPT big report marker'); print('x' * 80 * 900)" > "$R/controller-$(date +%s).txt"
+rm -f "$R"/sent/* 2>/dev/null
+curl -s --noproxy '*' "http://127.0.0.1:$PORT/__reset" >/dev/null
+app "$OPEN;act=confirm;idle;logrp"
+chk "an oversized report is posted cut at 56 KB with a note, not empty" "posts | python3 -c 'import sys,json;d=json.load(sys.stdin);r=[p for p in d if p[\"title\"].startswith(\"[controller]\")];raise SystemExit(0 if r and \"big report marker\" in r[0][\"body\"] and \"[cut: report was larger than 56 KB]\" in r[0][\"body\"] else 1)'"
 exit $fail

@@ -2454,6 +2454,14 @@ static int rp_build(int idx, char *title, size_t tn) {
 		else snprintf(age, sizeof age, "%lld days", mins / 1440);
 		fprintf(o, "Event time: %s (%s before this was sent at %s)\n\n", ev, age, when);
 		char *body = read_file(p, 56000, NULL);
+		if (!body && sz > 56000) {                  /* too large: post the first 56 KB instead of an empty body */
+			FILE *hf = fopen(p, "rb");
+			if (hf) {
+				body = malloc(56001);
+				if (body) { size_t hn = fread(body, 1, 56000, hf); body[hn] = 0; }
+				fclose(hf);
+			}
+		}
 		if (body) { fputs(body, o); if (sz > 56000) fputs("\n[cut: report was larger than 56 KB]\n", o); free(body); }
 		snprintf(title, tn, "[%s] %s %s", kind, host, ev);
 	} else {
