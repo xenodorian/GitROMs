@@ -3,6 +3,8 @@
 # Sourced by play_gba.sh (when the game exits) and by GitROMs.sh (every start), so it works however the game was started.
 # Needs PORTSDIR and GAMEDIR; ROMROOT is the gba folder (default: next to the ports folder). No python needed.
 
+[ -f "$GAMEDIR/input_guard.sh" ] && . "$GAMEDIR/input_guard.sh"
+
 lift_log() {
   mkdir -p "$GAMEDIR/data" 2>/dev/null
   echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$GAMEDIR/data/lift.log"
@@ -40,6 +42,8 @@ sysinfo() {
       echo "--- remap $f"; grep -E '^input_player1_btn_(a|b) ' "$f" 2>/dev/null | head -4
     done
   done
+  type find_input_overrides >/dev/null 2>&1 && { local ov; ov="$(find_input_overrides | head -8)"; [ -n "$ov" ] && { echo "--- keyboard binds in core/game override files (they beat the cleared binds)"; echo "$ov"; }; }
+  [ -f "$GAMEDIR/data/play.log" ] && grep -E 'input guard|WARNING keyboard|cleared for this run' "$GAMEDIR/data/play.log" 2>/dev/null | tail -6
   # the controller profile RetroArch picked for a connected device: its A and B lines only
   names="$(sed -n 's/^N: Name="\(.*\)"$/\1/p' /proc/bus/input/devices 2>/dev/null)"
   while IFS= read -r n; do

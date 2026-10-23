@@ -71,6 +71,7 @@ if [ -n "$RA" ] && [ -n "$CORE" ]; then
   if type write_ra_input_cfg >/dev/null 2>&1 && write_ra_input_cfg "$GAMEDIR/data/ra_input.cfg" >/dev/null; then
     APPEND="--appendconfig \"$GAMEDIR/data/ra_input.cfg\""
     log "keyboard binds of the game buttons are cleared for this run (data/ra_input.cfg)"
+    type find_input_overrides >/dev/null 2>&1 && find_input_overrides | while IFS= read -r l; do log "WARNING keyboard bind in an override file, it beats the cleared binds: $l"; done
   fi
   run_logged "\"$RA\" -L \"$CORE\" $APPEND \"$ROM\""; rc=$?; extract_report
   [ "$rc" -eq 0 ] && done_ 0

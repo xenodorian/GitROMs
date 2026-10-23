@@ -18,5 +18,8 @@ chk "the log says what was done" "grep -q 'gptokeyb is running' \"$LOGF\" && gre
 write_ra_input_cfg "$T/ra.cfg" >/dev/null
 chk "keyboard binds of a and b are nul" "grep -qx 'input_player1_a = \"nul\"' \"$T/ra.cfg\" && grep -qx 'input_player1_b = \"nul\"' \"$T/ra.cfg\""
 chk "no pad bind (_btn) is written" "! grep -q '_btn' \"$T/ra.cfg\""
-chk "sixteen keyboard binds" "[ \"\$(wc -l < \"$T/ra.cfg\")\" = 16 ]"
+chk "all 25 keyboard binds (buttons, analog, turbo)" "[ \"\$(wc -l < \"$T/ra.cfg\")\" = 25 ]"
+mkdir -p "$T/h/.config/retroarch/config/mGBA"; printf 'input_player1_a = "x"\naudio_volume = "1"\n' > "$T/h/.config/retroarch/config/mGBA/mGBA.cfg"
+chk "a core override that rebinds a keyboard key for a button is found" "HOME=$T/h find_input_overrides | grep -q 'input_player1_a = \"x\"'"
+chk "an override without such a bind is not listed" "! HOME=$T/h find_input_overrides | grep -q audio_volume"
 exit $fail

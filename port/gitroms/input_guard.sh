@@ -30,6 +30,20 @@ stop_gptokeyb() {
 write_ra_input_cfg() {
   local f="$1" k
   : > "$f" || return 1
-  for k in a b x y l r l2 r2 l3 r3 start select up down left right; do echo "input_player1_$k = \"nul\"" >> "$f"; done
+  for k in a b x y l r l2 r2 l3 r3 start select up down left right l_x_plus l_x_minus l_y_plus l_y_minus r_x_plus r_x_minus r_y_plus r_y_minus turbo; do
+    echo "input_player1_$k = \"nul\"" >> "$f"
+  done
   echo "$f"
+}
+
+# Core and per-game override files (config/<core>/<core>.cfg and <game>.cfg) are applied AFTER --appendconfig and win over it (tested with
+# RetroArch 1.18). List the ones that rebind a keyboard key for a game button, so the report and play.log show them.
+find_input_overrides() {
+  local d f
+  for d in "$HOME/.config/retroarch" /home/ark/.config/retroarch /home/ark/.config/retroarch32 /opt/retroarch; do
+    for f in "$d"/config/mGBA/*.cfg "$d"/config/gpSP/*.cfg "$d"/config/*/PokemonWarAndMurder.cfg; do
+      [ -f "$f" ] || continue
+      grep -E '^input_player1_(a|b|x|y|l|r|start|select|up|down|left|right) = "[^"]' "$f" 2>/dev/null | sed "s|^|override $f: |"
+    done
+  done
 }
