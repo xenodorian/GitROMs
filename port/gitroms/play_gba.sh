@@ -19,6 +19,12 @@ say() {
   echo "$*"
   if type pm_message >/dev/null 2>&1; then pm_message "$*"; else echo "$*" > /dev/tty1 2>/dev/null; fi
 }
+# What can feed keys to the game right now: input-related processes (a leftover gptokeyb turns the pad into keyboard keys) and input devices with their handlers.
+inputsnap() {
+  echo "processes: $(ps -eo pid=,etimes=,comm= 2>/dev/null | grep -E 'gptokeyb|retroarch|ogage|oga_controls|emulationstation|joy2key|evtest|sdl' | awk '{printf "%s(pid %s, age %ss) ", $3, $1, $2}')"
+  echo "input devices (name [handlers]):"
+  awk 'BEGIN { RS = ""; FS = "\n" } { n = ""; h = ""; for (i = 1; i <= NF; i++) { if ($i ~ /^N: Name=/) { n = $i; sub(/^N: Name=/, "", n) } if ($i ~ /^H: Handlers=/) { h = $i; sub(/^H: Handlers=/, "", h) } } print "  " n " [" h "]" }' /proc/bus/input/devices 2>/dev/null | head -12
+}
 # Controller context for the report: only what is needed to see how ArkOS and RetroArch map the GBA A and B buttons.
 sysinfo() {
   echo "=== launcher side (ArkOS / RetroArch) ==="
@@ -26,7 +32,10 @@ sysinfo() {
   [ -f /etc/os-release ] && grep -E '^PRETTY_NAME=' /etc/os-release 2>/dev/null
   for f in /home/ark/.config/.version /opt/system/version; do [ -f "$f" ] && echo "arkos version file $f: $(head -c 60 "$f" 2>/dev/null)"; done
   echo "started with: ${CMD:-RetroArch ${RA:-unknown} core ${CORE:-unknown}}"
-  echo "input devices: $(sed -n 's/^N: Name="\(.*\)"$/\1/p' /proc/bus/input/devices 2>/dev/null | head -6 | tr '\n' ';')"
+  echo "--- input state when the game started"
+  cat "$GAMEDIR/data/input_launch.txt" 2>/dev/null
+  echo "--- input state when the game exited"
+  inputsnap
   local cfg d f n names found=0 rn=0
   for cfg in "$HOME/.config/retroarch/retroarch.cfg" /home/ark/.config/retroarch/retroarch.cfg /home/ark/.config/retroarch32/retroarch.cfg /opt/retroarch/retroarch.cfg; do
     [ -f "$cfg" ] || continue
@@ -83,6 +92,8 @@ PY
 done_() { type pm_finish >/dev/null 2>&1 && pm_finish; exit "${1:-0}"; }
 
 log "start: $TITLE rom=$ROM"
+inputsnap > "$GAMEDIR/data/input_launch.txt" 2>/dev/null
+pidof gptokeyb >/dev/null 2>&1 && log "gptokeyb is running before the game starts (pid $(pidof gptokeyb)); left alone"
 if [ ! -s "$ROM" ]; then
   log "rom missing or empty"
   say "$TITLE is not on this card yet. Open GitROMs and download it first."
