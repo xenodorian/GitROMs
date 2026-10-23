@@ -49,6 +49,12 @@ echo "curl: $(command -v curl || echo MISSING)"
 
 cd "$GAMEDIR" || exit 1
 
+# A controller report the game left in its save (REPORT in the start menu) is lifted into sgba/reports so [Send reports] can post it,
+# however the game was started.
+if [ -f "$GAMEDIR/lift_report.sh" ]; then
+  . "$GAMEDIR/lift_report.sh" 2>/dev/null && lift_report
+fi
+
 # The roms partition is the parent of the ports folder (/roms, /roms2, ...).
 ROMS_PARENT="$(dirname "$PORTSDIR")"
 [ -d "$ROMS_PARENT" ] && export GITROMS_ROMS="$ROMS_PARENT"

@@ -2467,10 +2467,14 @@ static int rp_build(int idx, char *title, size_t tn) {
 	} else {
 		char p[560];
 		fprintf(o, "GitROMs status report\nversion: %s\ntime: %s\ndevice: %s\nhome: %s\nports: %s\n", VERSION, when, host, g_home, g_ports);
+		snprintf(p, sizeof p, "%s/lift.log", g_home);                  /* what the launcher found in the game's save: first, so it is never cut */
+		rp_tail(o, p, 12, "lift.log (controller report lifted from the save)");
+		snprintf(p, sizeof p, "%s/play.log", g_home);
+		rp_tail(o, p, 20, "play.log (starting a GBA game from the Ports entry)");
 		snprintf(p, sizeof p, "%s/sessions.log", rp.dir);
 		rp_tail(o, p, 25, "sgba/reports/sessions.log");
 		snprintf(p, sizeof p, "%s/sgba/sgba_launch.log", g_ports);
-		rp_tail(o, p, 40, "sgba/sgba_launch.log");
+		rp_tail(o, p, 15, "sgba/sgba_launch.log");
 		{                                                              /* one log per game: its sessions, crashes and errors with their times */
 			char ld[560];
 			snprintf(ld, sizeof ld, "%s/sgba/logs", g_ports);
@@ -2493,7 +2497,7 @@ static int rp_build(int idx, char *title, size_t tn) {
 		}
 		rp_tail(o, "/dev/shm/runcommand.log", 30, "ArkOS runcommand.log (the emulator that ran the last ROM, if present)");
 		snprintf(p, sizeof p, "%s/sgba/sgba.log", g_ports);
-		rp_tail(o, p, 60, "sgba/sgba.log");
+		rp_tail(o, p, 20, "sgba/sgba.log");
 		rp_tail(o, g_logpath, 80, "gitroms.log");
 		snprintf(p, sizeof p, "%s/gitroms.prev.log", g_home);
 		rp_tail(o, p, 40, "gitroms.prev.log (the run before)");

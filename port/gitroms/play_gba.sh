@@ -19,75 +19,9 @@ say() {
   echo "$*"
   if type pm_message >/dev/null 2>&1; then pm_message "$*"; else echo "$*" > /dev/tty1 2>/dev/null; fi
 }
-# What can feed keys to the game right now: input-related processes (a leftover gptokeyb turns the pad into keyboard keys) and input devices with their handlers.
-inputsnap() {
-  echo "processes: $(ps -eo pid=,etimes=,comm= 2>/dev/null | grep -E 'gptokeyb|retroarch|ogage|oga_controls|emulationstation|joy2key|evtest|sdl' | awk '{printf "%s(pid %s, age %ss) ", $3, $1, $2}')"
-  echo "input devices (name [handlers]):"
-  awk 'BEGIN { RS = ""; FS = "\n" } { n = ""; h = ""; for (i = 1; i <= NF; i++) { if ($i ~ /^N: Name=/) { n = $i; sub(/^N: Name=/, "", n) } if ($i ~ /^H: Handlers=/) { h = $i; sub(/^H: Handlers=/, "", h) } } print "  " n " [" h "]" }' /proc/bus/input/devices 2>/dev/null | head -12
-}
-# Controller context for the report: only what is needed to see how ArkOS and RetroArch map the GBA A and B buttons.
-sysinfo() {
-  echo "=== launcher side (ArkOS / RetroArch) ==="
-  echo "date: $(date '+%Y-%m-%d %H:%M:%S')"
-  [ -f /etc/os-release ] && grep -E '^PRETTY_NAME=' /etc/os-release 2>/dev/null
-  for f in /home/ark/.config/.version /opt/system/version; do [ -f "$f" ] && echo "arkos version file $f: $(head -c 60 "$f" 2>/dev/null)"; done
-  echo "started with: ${CMD:-RetroArch ${RA:-unknown} core ${CORE:-unknown}}"
-  echo "--- input state when the game started"
-  cat "$GAMEDIR/data/input_launch.txt" 2>/dev/null
-  echo "--- input state when the game exited"
-  inputsnap
-  local cfg d f n names found=0 rn=0
-  for cfg in "$HOME/.config/retroarch/retroarch.cfg" /home/ark/.config/retroarch/retroarch.cfg /home/ark/.config/retroarch32/retroarch.cfg /opt/retroarch/retroarch.cfg; do
-    [ -f "$cfg" ] || continue
-    echo "--- $cfg"
-    grep -E '^(input_joypad_driver|input_player1_(a|b)_(btn|axis)|input_player1_joypad_index|menu_swap_ok_cancel_buttons)' "$cfg" 2>/dev/null | head -10
-    d="$(dirname "$cfg")"
-    for f in "$d"/config/remaps/*mGBA*/* "$d"/config/remaps/*gpSP*/* "$d"/config/remaps/*gba*/*; do
-      [ -f "$f" ] || continue
-      rn=$((rn + 1)); [ "$rn" -le 3 ] || break
-      echo "--- remap $f"; grep -E '^input_player1_btn_(a|b) ' "$f" 2>/dev/null | head -4
-    done
-  done
-  # the controller profile RetroArch picked for a connected device: its A and B lines only
-  names="$(sed -n 's/^N: Name="\(.*\)"$/\1/p' /proc/bus/input/devices 2>/dev/null)"
-  while IFS= read -r n; do
-    [ -n "$n" ] || continue
-    for f in /home/ark/.config/retroarch/autoconfig/udev/*.cfg /home/ark/.config/retroarch/autoconfig/*.cfg /opt/retroarch/autoconfig/udev/*.cfg /etc/retroarch/autoconfig/udev/*.cfg; do
-      [ -f "$f" ] && grep -q -F "input_device = \"$n\"" "$f" 2>/dev/null || continue
-      [ "$found" -lt 2 ] || break 2
-      found=$((found + 1))
-      echo "--- profile $f"; grep -E '^input_(a|b)_(btn|axis) ' "$f" 2>/dev/null | head -4
-    done
-  done <<< "$names"
-}
-# Lift a controller report the game stored in the save (flash sector 31) into sgba/reports, with the controller context above.
-# The same report stays in the save, so it is only lifted again when its text changed.
-extract_report() {
-  local sav="" cand
-  for cand in "${ROM%.gba}.srm" "${ROM%.gba}.sav"; do
-    [ -f "$cand" ] && sav="$cand" && break
-  done
-  [ -n "$sav" ] || return 0
-  local out="$PORTSDIR/sgba/reports" body
-  body="$(python3 - "$sav" <<'PY' 2>/dev/null
-import sys
-data = open(sys.argv[1], "rb").read()
-i = data.find(b"PWAMRPT")
-if i >= 0:
-    sys.stdout.write(data[i:i+3000].split(b"\x00", 1)[0].decode("latin1", "replace"))
-PY
-)"
-  [ -n "$body" ] || return 0
-  local sum last="$GAMEDIR/data/last_report.sum"
-  sum="$(printf '%s' "$body" | cksum | cut -d' ' -f1,2)"
-  [ -f "$last" ] && [ "$(cat "$last" 2>/dev/null)" = "$sum" ] && return 0
-  mkdir -p "$out"
-  { echo "Pokemon War and Murder controller report"
-    echo "How to read it: the game logs the raw GBA key register every frame while the player presses A, then B (0001 = GBA A, 0002 = GBA B). A different bit or nothing means ArkOS / RetroArch maps that button elsewhere; the launcher part below shows the mapping."
-    echo "$body"
-    sysinfo | head -c 6000; } > "$out/controller-$(date +%s).txt" 2>/dev/null && echo "$sum" > "$last"
-  log "controller report written to $out"
-}
+# inputsnap, sysinfo and lift_report live in lift_report.sh (also used when GitROMs starts).
+. "$GAMEDIR/lift_report.sh" 2>/dev/null || { inputsnap() { :; }; lift_report() { :; }; }
+extract_report() { ROMROOT="$(dirname "$ROM")" lift_report; }
 
 done_() { type pm_finish >/dev/null 2>&1 && pm_finish; exit "${1:-0}"; }
 

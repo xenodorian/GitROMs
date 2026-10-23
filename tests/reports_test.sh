@@ -15,6 +15,7 @@ export NO_PROXY=127.0.0.1 no_proxy=127.0.0.1 GITROMS_NODEFAULTS=1 GITROMS_API="h
 PORTS="$T/ports"; H="$PORTS/gitroms/data"; R="$PORTS/sgba/reports"
 mkdir -p "$H" "$R" "$T/roms"
 fail=0
+D=$(date +%Y%m%d)                          # incident files are dated today: older ones are set aside after max_age_days
 chk() { if eval "$2"; then echo "PASS $1"; else echo "FAIL $1"; fail=1; fi; }
 posts() { curl -s --noproxy '*' "http://127.0.0.1:$PORT/__posts"; }
 app() {
@@ -23,9 +24,10 @@ app() {
   LOG="$H/gitroms.log"
 }
 OPEN="idle;act=confirm;act=confirm"       # placeholder, replaced below
-printf 'SGBA report: crash\nbuild: abc\nsignal: 11 "quoted" \\ back\nline two\n' > "$R/crash-20261014-100000.txt"
-printf 'SGBA report: unclean\nbuild: abc\n' > "$R/unclean-20261014-090000.txt"
+printf 'SGBA report: crash\nbuild: abc\nsignal: 11 "quoted" \\ back\nline two\n' > "$R/crash-$D-100000.txt"
+printf 'SGBA report: unclean\nbuild: abc\n' > "$R/unclean-$D-090000.txt"
 printf '2026-10-14 10:00:00 game=x secs=10 fps=59.9\n' > "$R/sessions.log"
+printf 'lift marker: save has a report\n' > "$H/lift.log"; printf 'play marker: started from the Ports entry\n' > "$H/play.log"
 printf 'sgba launch log line\n' > "$PORTS/sgba/sgba_launch.log"; printf 'sgba log line\n' > "$PORTS/sgba/sgba.log"
 # the root list needs the GitHub user listing; with the API pointed at the mock it returns 404 -> error screen, so open the
 # reports screen through the test hook instead
@@ -43,23 +45,24 @@ app "$OPEN;act=confirm;idle;logrp"
 chk "3 issues posted" "[ \"\$(posts | python3 -c 'import sys,json;print(len(json.load(sys.stdin)))')\" = 3 ]"
 chk "posted to the configured repo with the app user agent" "posts | python3 -c 'import sys,json;d=json.load(sys.stdin);raise SystemExit(0 if all(p[\"path\"]==\"/repos/owner/repo/issues\" and p[\"ua\"].startswith(\"GitROMs\") for p in d) else 1)'"
 chk "crash body arrived intact (quotes, backslash, newlines)" "posts | python3 -c 'import sys,json;d=json.load(sys.stdin);b=[p for p in d if p[\"title\"].startswith(\"[crash]\")][0][\"body\"];raise SystemExit(0 if b.startswith(\"Event time: \") and \"SGBA report: crash\\nbuild: abc\\nsignal: 11 \\\"quoted\\\" \\\\ back\\nline two\" in b else 1)'"
+chk "status report carries lift.log and play.log (what the launcher found in the save)" "posts | python3 -c 'import sys,json;d=json.load(sys.stdin);b=[p for p in d if p[\"title\"].startswith(\"[status]\")][0][\"body\"];raise SystemExit(0 if all(k in b for k in (\"lift marker: save has a report\",\"play marker: started from the Ports entry\")) else 1)'"
 chk "status report carries the launch log, sgba.log, sessions and gitroms.log" "posts | python3 -c 'import sys,json;d=json.load(sys.stdin);b=[p for p in d if p[\"title\"].startswith(\"[status]\")][0][\"body\"];raise SystemExit(0 if all(k in b for k in (\"sgba launch log line\",\"sgba log line\",\"fps=59.9\",\"GitROMs 4.4 start\",\"version: 4.4\")) else 1)'"
-chk "sent files moved into sent/, sessions.log stays" "[ ! -e \"$R/crash-20261014-100000.txt\" ] && [ -f \"$R/sent/crash-20261014-100000.txt\" ] && [ -f \"$R/sessions.log\" ]"
+chk "sent files moved into sent/, sessions.log stays" "[ ! -e \"$R/crash-$D-100000.txt\" ] && [ -f \"$R/sent/crash-$D-100000.txt\" ] && [ -f \"$R/sessions.log\" ]"
 chk "done message says Sent 3 reports" "grep -q 'rp phase=2 n=0 sent=3 .*msg=Sent 3 reports' \"\$LOG\""
 chk "token is not written to the log" "! grep -q secret123 \"\$LOG\""
 chk "curl config with the token is removed afterwards" "[ ! -e \"$H/tmp/rp.cfg\" ]"
 
 # 3. wrong token: readable message, files kept
-printf 'SGBA report: crash\nbuild: abc\n' > "$R/crash-20261014-110000.txt"
+printf 'SGBA report: crash\nbuild: abc\n' > "$R/crash-$D-110000.txt"
 printf 'repo=owner/repo\ntoken=bad\n' > "$H/upload.conf"
 curl -s --noproxy '*' "http://127.0.0.1:$PORT/__reset" >/dev/null
 app "$OPEN;act=confirm;idle;logrp"
-chk "bad token: message names the token, nothing posted, file kept" "grep -q 'msg=GitHub rejected the token (401)' \"\$LOG\" && [ \"\$(posts)\" = '[]' ] && [ -f \"$R/crash-20261014-110000.txt\" ]"
+chk "bad token: message names the token, nothing posted, file kept" "grep -q 'msg=GitHub rejected the token (401)' \"\$LOG\" && [ \"\$(posts)\" = '[]' ] && [ -f \"$R/crash-$D-110000.txt\" ]"
 
 # 4. missing repo
 printf 'repo=nope/nope\ntoken=secret123\n' > "$H/upload.conf"
 app "$OPEN;act=confirm;idle;logrp"
-chk "missing repo: 404 message" "grep -q 'msg=Repository not found' \"\$LOG\" && [ -f \"$R/crash-20261014-110000.txt\" ]"
+chk "missing repo: 404 message" "grep -q 'msg=Repository not found' \"\$LOG\" && [ -f \"$R/crash-$D-110000.txt\" ]"
 
 # 7. reports carry the time of the incident, and ones older than max_age_days are set aside, not posted
 printf 'SGBA report: crash\nbuild: old\n' > "$R/crash-1700000000.txt"                      # November 2023
