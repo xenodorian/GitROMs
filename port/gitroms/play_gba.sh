@@ -27,7 +27,8 @@ done_() { type pm_finish >/dev/null 2>&1 && pm_finish; exit "${1:-0}"; }
 
 log "start: $TITLE rom=$ROM"
 inputsnap > "$GAMEDIR/data/input_launch.txt" 2>/dev/null
-pidof gptokeyb >/dev/null 2>&1 && log "gptokeyb is running before the game starts (pid $(pidof gptokeyb)); left alone"
+# A leftover gptokeyb (fake keyboard) doubles every A and B press: stop it before the game starts. See input_guard.sh.
+if [ -f "$GAMEDIR/input_guard.sh" ]; then . "$GAMEDIR/input_guard.sh"; stop_gptokeyb; fi
 if [ ! -s "$ROM" ]; then
   log "rom missing or empty"
   say "$TITLE is not on this card yet. Open GitROMs and download it first."
@@ -56,7 +57,8 @@ fi
 
 # 2. RetroArch directly.
 RA=""
-for b in /opt/retroarch/bin/retroarch /usr/local/bin/retroarch /usr/bin/retroarch "$(command -v retroarch 2>/dev/null)"; do
+# /usr/local/bin/retroarch is ArkOS's own wrapper, the one EmulationStation runs; the program under /opt is the fallback.
+for b in /usr/local/bin/retroarch /opt/retroarch/bin/retroarch /usr/bin/retroarch "$(command -v retroarch 2>/dev/null)"; do
   [ -n "$b" ] && [ -x "$b" ] && RA="$b" && break
 done
 CORE=""
@@ -65,7 +67,12 @@ for d in "$HOME/.config/retroarch/cores" /home/ark/.config/retroarch/cores /opt/
 done
 log "retroarch: ${RA:-none} core: ${CORE:-none}"
 if [ -n "$RA" ] && [ -n "$CORE" ]; then
-  run_logged "\"$RA\" -L \"$CORE\" \"$ROM\""; rc=$?; extract_report
+  APPEND=""
+  if type write_ra_input_cfg >/dev/null 2>&1 && write_ra_input_cfg "$GAMEDIR/data/ra_input.cfg" >/dev/null; then
+    APPEND="--appendconfig \"$GAMEDIR/data/ra_input.cfg\""
+    log "keyboard binds of the game buttons are cleared for this run (data/ra_input.cfg)"
+  fi
+  run_logged "\"$RA\" -L \"$CORE\" $APPEND \"$ROM\""; rc=$?; extract_report
   [ "$rc" -eq 0 ] && done_ 0
 fi
 say "Could not start $TITLE. See gitroms/data/play.log, or start it from the GBA system."

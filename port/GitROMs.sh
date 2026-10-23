@@ -117,6 +117,10 @@ if [ ! -x "$BIN" ]; then
 fi
 echo "binary: $BIN"
 
+# A gptokeyb left over from an earlier run would feed fake keys to whatever starts next (it turns pad A and B into the keys z and x,
+# which RetroArch reads as GBA B and A). Stop any before we start our own and again after the program ends.
+[ -f "$GAMEDIR/input_guard.sh" ] && . "$GAMEDIR/input_guard.sh" && ig_log() { echo "$*"; } && stop_gptokeyb
+
 # Input comes from ONE place. If gptokeyb starts, the pad arrives as keys and
 # GitROMs ignores raw joystick events (they would double every press). If it
 # does not start, GitROMs reads the raw joystick buttons itself.
@@ -144,6 +148,7 @@ if [ $RC -eq 3 ] && [ -z "$SDL_VIDEODRIVER" ]; then
   RC=$?
 fi
 echo "gitroms exited with $RC"
+type stop_gptokeyb >/dev/null 2>&1 && stop_gptokeyb
 
 if [ $RC -ne 0 ]; then
   say "GitROMs could not start (code $RC). See gitroms/data/launch.log and gitroms.log"
