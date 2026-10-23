@@ -19,49 +19,37 @@ say() {
   echo "$*"
   if type pm_message >/dev/null 2>&1; then pm_message "$*"; else echo "$*" > /dev/tty1 2>/dev/null; fi
 }
-# Controller context for the report: what ArkOS and RetroArch map to the GBA A and B buttons. Every part is optional.
+# Controller context for the report: only what is needed to see how ArkOS and RetroArch map the GBA A and B buttons.
 sysinfo() {
   echo "=== launcher side (ArkOS / RetroArch) ==="
   echo "date: $(date '+%Y-%m-%d %H:%M:%S')"
-  echo "kernel: $(uname -srm 2>/dev/null)"
-  [ -f /etc/os-release ] && grep -E '^(PRETTY_NAME|VERSION)=' /etc/os-release 2>/dev/null
-  for f in /home/ark/.config/.version /opt/system/version; do [ -f "$f" ] && echo "$f: $(head -c 80 "$f" 2>/dev/null)"; done
-  echo "rom: $ROMFILE ($(wc -c < "$ROM" 2>/dev/null) bytes)"
-  echo "es gba command: ${CMD:-unknown}"
-  echo "retroarch: ${RA:-unknown} core: ${CORE:-unknown}"
-  echo "--- input devices (/proc/bus/input/devices)"
-  grep -E '^(N: Name|H: Handlers)' /proc/bus/input/devices 2>/dev/null | head -40
-  local cfg d
+  [ -f /etc/os-release ] && grep -E '^PRETTY_NAME=' /etc/os-release 2>/dev/null
+  for f in /home/ark/.config/.version /opt/system/version; do [ -f "$f" ] && echo "arkos version file $f: $(head -c 60 "$f" 2>/dev/null)"; done
+  echo "started with: ${CMD:-RetroArch ${RA:-unknown} core ${CORE:-unknown}}"
+  echo "input devices: $(sed -n 's/^N: Name="\(.*\)"$/\1/p' /proc/bus/input/devices 2>/dev/null | head -6 | tr '\n' ';')"
+  local cfg d f n names found=0 rn=0
   for cfg in "$HOME/.config/retroarch/retroarch.cfg" /home/ark/.config/retroarch/retroarch.cfg /home/ark/.config/retroarch32/retroarch.cfg /opt/retroarch/retroarch.cfg; do
     [ -f "$cfg" ] || continue
-    echo "--- $cfg (input lines for player 1, drivers, A/B related)"
-    grep -E '^(input_joypad_driver|input_driver|input_device|input_player1_(a|b|x|y|start|select|l|r|up|down|left|right)_(btn|axis)|input_player1_joypad_index|input_autodetect_enable|input_remap_binds_enable|input_menu_toggle|menu_swap_ok_cancel_buttons|input_swap_ok_cancel|input_enable_hotkey_btn)' "$cfg" 2>/dev/null | head -50
+    echo "--- $cfg"
+    grep -E '^(input_joypad_driver|input_player1_(a|b)_(btn|axis)|input_player1_joypad_index|menu_swap_ok_cancel_buttons)' "$cfg" 2>/dev/null | head -10
     d="$(dirname "$cfg")"
-    local rn=0
     for f in "$d"/config/remaps/*mGBA*/* "$d"/config/remaps/*gpSP*/* "$d"/config/remaps/*gba*/*; do
       [ -f "$f" ] || continue
-      rn=$((rn + 1)); [ "$rn" -le 6 ] || break
-      echo "--- remap file $f"; head -c 600 "$f" 2>/dev/null
-    done
-    for f in "$d"/config/mGBA/*.cfg "$d"/config/gpSP/*.cfg; do
-      [ -f "$f" ] || continue
-      echo "--- override $f"; grep -E 'input_|menu_swap' "$f" 2>/dev/null | head -30
+      rn=$((rn + 1)); [ "$rn" -le 3 ] || break
+      echo "--- remap $f"; grep -E '^input_player1_btn_(a|b) ' "$f" 2>/dev/null | head -4
     done
   done
-  # autoconfig profiles: only the ones that name a connected input device (RetroArch ships hundreds)
-  local names n found=0
+  # the controller profile RetroArch picked for a connected device: its A and B lines only
   names="$(sed -n 's/^N: Name="\(.*\)"$/\1/p' /proc/bus/input/devices 2>/dev/null)"
   while IFS= read -r n; do
     [ -n "$n" ] || continue
     for f in /home/ark/.config/retroarch/autoconfig/udev/*.cfg /home/ark/.config/retroarch/autoconfig/*.cfg /opt/retroarch/autoconfig/udev/*.cfg /etc/retroarch/autoconfig/udev/*.cfg; do
       [ -f "$f" ] && grep -q -F "input_device = \"$n\"" "$f" 2>/dev/null || continue
-      [ "$found" -lt 4 ] || break 2
+      [ "$found" -lt 2 ] || break 2
       found=$((found + 1))
-      echo "--- autoconfig $f (matches device $n)"; grep -E '^(input_device|input_driver|input_(a|b)_btn|input_(a|b)_axis)' "$f" 2>/dev/null | head -8
+      echo "--- profile $f"; grep -E '^input_(a|b)_(btn|axis) ' "$f" 2>/dev/null | head -4
     done
   done <<< "$names"
-  [ -f /dev/shm/runcommand.log ] && { echo "--- /dev/shm/runcommand.log (tail)"; tail -n 30 /dev/shm/runcommand.log 2>/dev/null; }
-  echo "--- play.log (tail)"; tail -n 25 "$LOG" 2>/dev/null
 }
 # Lift a controller report the game stored in the save (flash sector 31) into sgba/reports, with the controller context above.
 # The same report stays in the save, so it is only lifted again when its text changed.
@@ -86,10 +74,9 @@ PY
   [ -f "$last" ] && [ "$(cat "$last" 2>/dev/null)" = "$sum" ] && return 0
   mkdir -p "$out"
   { echo "Pokemon War and Murder controller report"
-    echo "How to read it: the game samples the raw GBA key register every frame while the player presses A, then B. Bit 0001 is the GBA A button, 0002 is B."
-    echo "If pressing A shows a different bit or nothing, the frontend (ArkOS / RetroArch) maps that button elsewhere; the launcher part below shows the mapping."
+    echo "How to read it: the game logs the raw GBA key register every frame while the player presses A, then B (0001 = GBA A, 0002 = GBA B). A different bit or nothing means ArkOS / RetroArch maps that button elsewhere; the launcher part below shows the mapping."
     echo "$body"
-    sysinfo | head -c 40000; } > "$out/controller-$(date +%s).txt" 2>/dev/null && echo "$sum" > "$last"
+    sysinfo | head -c 6000; } > "$out/controller-$(date +%s).txt" 2>/dev/null && echo "$sum" > "$last"
   log "controller report written to $out"
 }
 
