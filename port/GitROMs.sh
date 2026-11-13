@@ -43,6 +43,16 @@ finish() {
 
 echo "GitROMs launch $(date)"
 echo "ports dir: $PORTSDIR  controlfolder: $controlfolder"
+# The Ports list is the .sh files in this folder. Write Bat Kombat.sh here on every launch, and turn the
+# downloaded zip into snes/Bat Kombat.sfc, so the name shows up even when the menu ignores .zip files.
+rm -f "$PORTSDIR/Bat_Kombat.sh"
+if [ ! -s "$PORTSDIR/Bat Kombat.sh" ]; then
+  printf '%s\n' '#!/bin/bash' 'exec bash "$(cd "$(dirname "$0")" && pwd)/gitroms/play_snes.sh" "Bat Kombat.sfc" "Bat Kombat"' > "$PORTSDIR/Bat Kombat.sh"
+  chmod +x "$PORTSDIR/Bat Kombat.sh" 2>/dev/null || true
+fi
+if [ -f "$GAMEDIR/play_snes.sh" ]; then
+  GITROMS_PUBLISH_ONLY=1 bash "$GAMEDIR/play_snes.sh" "Bat Kombat.sfc" "Bat Kombat" || true
+fi
 echo "uname: $(uname -a)  device arch: ${DEVICE_ARCH:-unset}"
 echo "SDL2 libs: $( (ldconfig -p 2>/dev/null | grep -i 'libSDL2-2.0' | head -2 | tr '\n' ' ') || true)"
 echo "curl: $(command -v curl || echo MISSING)"

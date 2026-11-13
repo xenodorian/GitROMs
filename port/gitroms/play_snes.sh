@@ -8,7 +8,7 @@ PORTSDIR="$(cd "$(dirname "$0")/.." && pwd)"
 GAMEDIR="$PORTSDIR/gitroms"
 ROMROOT="$(dirname "$PORTSDIR")"
 SNESDIR="${GITROMS_SNES_DIR:-$ROMROOT/snes}"
-BASE="${ROMFILE%.*}"
+VISIBLE="$SNESDIR/Bat Kombat.sfc"
 extract_sfc() {
   # print the extracted .sfc/.smc path, or nothing
   local zip="$1" dest="$2" name="" out=""
@@ -28,18 +28,41 @@ for n in z.namelist():
   [ -s "$out" ] && printf '%s' "$out"
 }
 ZIP=""
-for c in "$SNESDIR/$ROMFILE" "$ROMROOT/arcade/$ROMFILE"; do
+for c in "$SNESDIR/UMK3_Batman.zip" "$SNESDIR/Bat Kombat.zip" "$ROMROOT/arcade/UMK3_Batman.zip" "$ROMROOT/arcade/Bat Kombat.zip"; do
   [ -s "$c" ] && ZIP="$c" && break
 done
 SFC=""
-for c in "$SNESDIR/$BASE.sfc" "$SNESDIR/$BASE.smc"; do
-  [ -s "$c" ] && SFC="$c" && break
-done
+[ -s "$VISIBLE" ] && SFC="$VISIBLE"
+[ -z "$SFC" ] && [ -s "$SNESDIR/UMK3_Batman.sfc" ] && SFC="$SNESDIR/UMK3_Batman.sfc"
 if [ -n "$ZIP" ] && { [ -z "$SFC" ] || [ "$ZIP" -nt "$SFC" ]; }; then
   got="$(extract_sfc "$ZIP" "$SNESDIR")"
   [ -n "$got" ] && SFC="$got"
 fi
+if [ -n "$SFC" ] && [ "$SFC" != "$VISIBLE" ]; then
+  mv -f "$SFC" "$VISIBLE" && SFC="$VISIBLE"
+fi
 ROM="${SFC:-$ZIP}"
+note_game() {
+  local gl="$1" rel="$2" name="$3" tmp
+  [ -f "$gl" ] || return 0
+  grep -F -q "$rel" "$gl" && return 0
+  tmp="$gl.gitroms-part"
+  awk -v p="$rel" -v n="$name" '
+    /<\/gameList>/ && !done {
+      print "\t<game>"
+      print "\t\t<path>" p "</path>"
+      print "\t\t<name>" n "</name>"
+      print "\t</game>"
+      done = 1
+    }
+    { print }
+  ' "$gl" > "$tmp" && mv -f "$tmp" "$gl"
+}
+[ -s "$VISIBLE" ] && note_game "$SNESDIR/gamelist.xml" "./Bat Kombat.sfc" "Bat Kombat"
+[ -s "$VISIBLE" ] && note_game "${HOME:-/home/ark}/.emulationstation/gamelists/snes/gamelist.xml" "./Bat Kombat.sfc" "Bat Kombat"
+[ -s "$PORTSDIR/Bat Kombat.sh" ] && note_game "$PORTSDIR/gamelist.xml" "./Bat Kombat.sh" "Bat Kombat"
+[ -s "$PORTSDIR/Bat Kombat.sh" ] && note_game "${HOME:-/home/ark}/.emulationstation/gamelists/ports/gamelist.xml" "./Bat Kombat.sh" "Bat Kombat"
+if [ "${GITROMS_PUBLISH_ONLY:-}" = 1 ]; then exit 0; fi
 XDG_DATA_HOME=${XDG_DATA_HOME:-$HOME/.local/share}
 for controlfolder in /opt/system/Tools/PortMaster /opt/tools/PortMaster "$XDG_DATA_HOME/PortMaster" /roms/ports/PortMaster; do [ -d "$controlfolder" ] && break; done
 [ -f "$controlfolder/control.txt" ] && source "$controlfolder/control.txt" 2>/dev/null
