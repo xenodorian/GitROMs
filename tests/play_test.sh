@@ -24,10 +24,24 @@ echo "\$@" > $T/ra
 EOT
 chmod +x "$T/bin/retroarch"; mkdir -p "$T/cores"; : > "$T/cores/mgba_libretro.so"
 ok "fallback rc" "$(PATH="$T/bin:$PATH" RA_CORES="$T/cores" run Pokemon_Fire_Emblem.sh)" 0
-ok "fallback args" "$(cat "$T/ra")" "-L $T/cores/mgba_libretro.so $T/roms/gba/PokemblemTheSacredStones.gba"
+ok "fallback args" "$(cat "$T/ra")" "-L $T/cores/mgba_libretro.so --appendconfig $P/gitroms/data/ra_input.cfg $T/roms/gba/PokemblemTheSacredStones.gba"
 ok "nothing to run" "$(PATH=/usr/bin:/bin run Pokemon_Fire_Emblem.sh)" 1
 cfg "false"
 ok "failing command, no retroarch" "$(PATH=/usr/bin:/bin run Pokemon_War_and_Murder.sh)" 1
 ok "log dated" "$(grep -cE '^20[0-9]{2}-[0-9]{2}-[0-9]{2} ' "$P/gitroms/data/play.log" | awk '{print ($1>5)}')" 1
+printf '<systemList><system><name>snes</name><command>echo %%ROM%% >> %s/ran</command></system></systemList>\n' "$T" > "$T/es.cfg"
+: > "$T/ran"
+ok "bat missing" "$(run Bat_Kombat.sh)" 1
+mkdir -p "$T/roms/snes"
+python3 - "$T/roms/snes/UMK3_Batman.zip" << 'PY'
+import sys, zipfile
+z = zipfile.ZipFile(sys.argv[1], "w")
+z.writestr("UMK3_Batman.sfc", b"x")
+z.close()
+PY
+ok "bat rc" "$(run Bat_Kombat.sh)" 0
+ok "bat rom" "$(tail -1 "$T/ran")" "$T/roms/snes/UMK3_Batman.sfc"
+if [ -s "$T/roms/snes/UMK3_Batman.sfc" ]; then got=yes; else got=no; fi
+ok "bat extracted" "$got" "yes"
 [ -n "$KEEP" ] && cat "$P/gitroms/data/play.log"
 echo "play_test: $pass passed, $fail failed"; [ $fail = 0 ]
