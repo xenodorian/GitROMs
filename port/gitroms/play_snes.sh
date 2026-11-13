@@ -1,14 +1,13 @@
 #!/bin/bash
 # Starts one SNES ROM from the ports menu: play_snes.sh <rom file name> <title>
-# The ROM is downloaded and kept current by GitROMs into <roms>/snes. A .zip is unpacked to a .sfc next to it, because
-# some ArkOS builds list .sfc in the SNES menu and skip .zip. It is played by the command EmulationStation uses for the
-# snes system, or RetroArch with a snes9x core. Everything is logged with times to gitroms/data/play.log.
+# GitROMs downloads the ROM itself as <roms>/snes/Bat_Kombat.sfc and updates that file.
+# A leftover zip from the old download is unpacked only when that .sfc is not there yet.
 ROMFILE="$1"; TITLE="${2:-$1}"
 PORTSDIR="$(cd "$(dirname "$0")/.." && pwd)"
 GAMEDIR="$PORTSDIR/gitroms"
 ROMROOT="$(dirname "$PORTSDIR")"
 SNESDIR="${GITROMS_SNES_DIR:-$ROMROOT/snes}"
-VISIBLE="$SNESDIR/Bat Kombat.sfc"
+VISIBLE="$SNESDIR/Bat_Kombat.sfc"
 extract_sfc() {
   # print the extracted .sfc/.smc path, or nothing
   local zip="$1" dest="$2" name="" out=""
@@ -27,21 +26,24 @@ for n in z.namelist():
   fi
   [ -s "$out" ] && printf '%s' "$out"
 }
-ZIP=""
-for c in "$SNESDIR/UMK3_Batman.zip" "$SNESDIR/Bat Kombat.zip" "$ROMROOT/arcade/UMK3_Batman.zip" "$ROMROOT/arcade/Bat Kombat.zip"; do
-  [ -s "$c" ] && ZIP="$c" && break
-done
 SFC=""
 [ -s "$VISIBLE" ] && SFC="$VISIBLE"
-[ -z "$SFC" ] && [ -s "$SNESDIR/UMK3_Batman.sfc" ] && SFC="$SNESDIR/UMK3_Batman.sfc"
-if [ -n "$ZIP" ] && { [ -z "$SFC" ] || [ "$ZIP" -nt "$SFC" ]; }; then
-  got="$(extract_sfc "$ZIP" "$SNESDIR")"
-  [ -n "$got" ] && SFC="$got"
+# An older GitROMs saved a zip. Use it only when the named ROM is missing, and never let it replace that ROM.
+if [ -z "$SFC" ]; then
+  ZIP=""
+  for c in "$SNESDIR/UMK3_Batman.zip" "$SNESDIR/Bat Kombat.zip" "$ROMROOT/arcade/UMK3_Batman.zip" "$ROMROOT/arcade/Bat Kombat.zip"; do
+    [ -s "$c" ] && ZIP="$c" && break
+  done
+  [ -z "$SFC" ] && [ -s "$SNESDIR/UMK3_Batman.sfc" ] && SFC="$SNESDIR/UMK3_Batman.sfc"
+  if [ -n "$ZIP" ]; then
+    got="$(extract_sfc "$ZIP" "$SNESDIR")"
+    [ -n "$got" ] && SFC="$got"
+  fi
+  if [ -n "$SFC" ] && [ "$SFC" != "$VISIBLE" ]; then
+    mv -f "$SFC" "$VISIBLE" && SFC="$VISIBLE"
+  fi
 fi
-if [ -n "$SFC" ] && [ "$SFC" != "$VISIBLE" ]; then
-  mv -f "$SFC" "$VISIBLE" && SFC="$VISIBLE"
-fi
-ROM="${SFC:-$ZIP}"
+ROM="${SFC:-}"
 note_game() {
   local gl="$1" rel="$2" name="$3" tmp
   [ -f "$gl" ] || return 0
@@ -58,8 +60,8 @@ note_game() {
     { print }
   ' "$gl" > "$tmp" && mv -f "$tmp" "$gl"
 }
-[ -s "$VISIBLE" ] && note_game "$SNESDIR/gamelist.xml" "./Bat Kombat.sfc" "Bat Kombat"
-[ -s "$VISIBLE" ] && note_game "${HOME:-/home/ark}/.emulationstation/gamelists/snes/gamelist.xml" "./Bat Kombat.sfc" "Bat Kombat"
+[ -s "$VISIBLE" ] && note_game "$SNESDIR/gamelist.xml" "./Bat_Kombat.sfc" "Bat Kombat"
+[ -s "$VISIBLE" ] && note_game "${HOME:-/home/ark}/.emulationstation/gamelists/snes/gamelist.xml" "./Bat_Kombat.sfc" "Bat Kombat"
 [ -s "$PORTSDIR/Bat Kombat.sh" ] && note_game "$PORTSDIR/gamelist.xml" "./Bat Kombat.sh" "Bat Kombat"
 [ -s "$PORTSDIR/Bat Kombat.sh" ] && note_game "${HOME:-/home/ark}/.emulationstation/gamelists/ports/gamelist.xml" "./Bat Kombat.sh" "Bat Kombat"
 if [ "${GITROMS_PUBLISH_ONLY:-}" = 1 ]; then exit 0; fi

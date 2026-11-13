@@ -81,9 +81,9 @@ folder) so the game never exists in two places.
 The Pokemon War and Murder is built in: it is saved as `gba/PokemonWarAndMurder.gba`
 next to your other GBA games. Save states are tied to the exact ROM, so after an
 update an old `.state` may not load; in-game saves are not touched.
-Bat Kombat is built in the same way: `UMK3_Batman.zip` from xenodorian/Bat-Kombat
-is saved as `snes/UMK3_Batman.zip`. The ports entry is `Bat Kombat.sh`. Opening GitROMs
-or that entry unpacks it to `snes/Bat Kombat.sfc`, which is the name the SNES list shows.
+Bat Kombat is the same kind of lookup: `Bat_Kombat.sfc` from xenodorian/Bat-Kombat
+(`release/Bat_Kombat.sfc`) is saved as `snes/Bat_Kombat.sfc`. That is the file the updater
+checks and replaces. The ports entry is `Bat Kombat.sh`.
 
 To add another game or bundle, add a line to `gitroms/components.conf`
 (the file explains the format).

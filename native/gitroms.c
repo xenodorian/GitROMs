@@ -84,8 +84,9 @@ int SDL_PushEvent(SDL_Event *);
 #define VH 480
 #define MAXITEMS 1500
 #define ROWS 12
+#define COMP_ROWS 5
 #define ROWH 30
-#define VERSION "4.4"
+#define VERSION "4.19"
 
 static uint32_t fb[VW * VH];
 
@@ -1319,7 +1320,7 @@ typedef struct {
 } Comp;
 
 static Comp comp[MAXCOMP];
-static int ncomp, comp_sel, up_from = SC_LIST;   /* screen to return to */
+static int ncomp, comp_sel, comp_scroll, up_from = SC_LIST;   /* screen to return to */
 static char g_ports[300];
 
 static struct {
@@ -1469,7 +1470,7 @@ static void comps_load(void) {
 	 * card with an older components.conf still gets new ones (an unwanted one can be
 	 * hidden by pointing a line at the same URL and giving it another name). */
 	static const struct { const char *name, *url, *dest, *keep, *src, *retire; int kind, self; } def[] = {
-		{"GitROMs", "https://github.com/xenodorian/GitROMs/raw/main/dist/GitROMs.zip", ".",
+		{"GitROMs", "https://raw.githubusercontent.com/xenodorian/GitROMs/main/dist/GitROMs.zip", ".",
 		 "gitroms/gitroms.conf,gitroms/components.conf", "commit:xenodorian/GitROMs:dist/GitROMs.zip", "", 0, 1},
 		{"SGBA emulator", "https://github.com/xenodorian/SGBA/releases/download/latest/SGBA-arkos-aarch64.zip", ".",
 		 "README.txt,sgba/controls.json", "commit:xenodorian/SGBA:",
@@ -1487,8 +1488,8 @@ static void comps_load(void) {
 		/* One release ROM. The name is exact aside from case and accents. There is no second filename, so a stale copy cannot be chosen. */
 		{"Pokemon War and Murder", "find:xenodorian/Pokemon-War-and-Murder:PokemonWarAndMurder.gba", "../gba/PokemonWarAndMurder.gba", "", "", "", 1, 0},
 		{"Pokemon Fire Emblem", "find:xenodorian/PoekEmblem:PokemblemTheSacredStones.gba", "../gba/PokemblemTheSacredStones.gba", "", "", "", 1, 0},
-		/* SNES hack. The published file is a zip of one .sfc; ArkOS's snes folder accepts the zip. */
-		{"Bat Kombat", "find:xenodorian/Bat-Kombat:UMK3_Batman.zip", "../snes/UMK3_Batman.zip", "", "", "", 1, 0},
+		/* One file, no zip. The name is exact aside from case. Saved as the SNES list name. */
+		{"Bat Kombat", "find:xenodorian/Bat-Kombat:Bat_Kombat.sfc", "../snes/Bat_Kombat.sfc", "", "", "", 1, 0},
 	};
 	/* Entries of older components.conf files that a built-in entry replaced. */
 	static const char *obsolete[] = {
@@ -1496,6 +1497,8 @@ static void comps_load(void) {
 		"https://github.com/xenodorian/Pokemon-War-and-Murder/raw/main/roms/Pokemon%20War%20and%20Murder.gba",   /* replaced by the find: entry; the old ROM on the card is left alone */
 		"find:xenodorian/Pokemon-War-and-Murder:Pok\xc3\xa9monWarAndMurder.gba;Pokemon War and Murder.gba",   /* the fallback name could select a stale copy */
 		"find:xenodorian/Pokemon-War-and-Murder:Pokemon War.gba",   /* removed 2026-10-22: one release name only; the ROM already on a card is left alone */
+		"https://github.com/xenodorian/GitROMs/raw/main/dist/GitROMs.zip",   /* cached copy; the raw host above is what the device fetches */
+		"find:xenodorian/Bat-Kombat:UMK3_Batman.zip",   /* the zip was the wrong file; the ROM is release/Bat_Kombat.sfc */
 	};
 	if (!getenv("GITROMS_NODEFAULTS"))
 		for (int i = 0; i < ncomp;) {
@@ -2176,7 +2179,7 @@ static void up_step(uint32_t now) {
 			repo[rl] = 0;
 			if (col) scpy(path, sizeof path, col + 1);
 			if (repo[0]) {
-				if (path[0]) snprintf(url, sizeof url, "%s/repos/%s/commits?path=%s&per_page=1", g_api, repo, path);
+				if (path[0]) snprintf(url, sizeof url, "%s/repos/%s/commits?path=%s&sha=main&per_page=1", g_api, repo, path);
 				else snprintf(url, sizeof url, "%s/repos/%s/commits?per_page=1", g_api, repo);
 				up_tmp(out, sizeof out, "up.stamp");
 				up_tmp(err, sizeof err, "up.err");
@@ -2646,8 +2649,19 @@ static void rp_step(void) {
 static void updates_open(void) {
 	if (!ncomp) comps_load();
 	comp_sel = 0;
+	comp_scroll = 0;
 	screen = SC_UPDATES;
 	if (up.phase == UPH_NONE) up_start_check(NULL);
+}
+
+static void comp_reveal(void) {
+	if (comp_sel < 0) comp_sel = 0;
+	if (ncomp > 0 && comp_sel >= ncomp) comp_sel = ncomp - 1;
+	if (comp_sel < comp_scroll) comp_scroll = comp_sel;
+	if (comp_sel >= comp_scroll + COMP_ROWS) comp_scroll = comp_sel - COMP_ROWS + 1;
+	if (comp_scroll < 0) comp_scroll = 0;
+	int maxs = ncomp > COMP_ROWS ? ncomp - COMP_ROWS : 0;
+	if (comp_scroll > maxs) comp_scroll = maxs;
 }
 
 /* ---------------------------------------------------------------- input */
@@ -2772,8 +2786,8 @@ static void act(int a) {
 		else if (a == A_BACK || a == A_START) screen = prev_screen;
 		break;
 	case SC_UPDATES:
-		if (a == A_UP && comp_sel > 0) comp_sel--;
-		else if (a == A_DOWN && comp_sel < ncomp - 1) comp_sel++;
+		if (a == A_UP && comp_sel > 0) { comp_sel--; comp_reveal(); }
+		else if (a == A_DOWN && comp_sel < ncomp - 1) { comp_sel++; comp_reveal(); }
 		else if (a == A_OK) {
 			if (up.phase == UPH_NONE && up_available()) up_start_update();
 			else if (up.phase == UPH_NONE && up.restart_needed) { logf_("exit: quit after GitROMs updated itself"); g_run = 0; }
@@ -3177,10 +3191,12 @@ static void draw_screen(uint32_t now) {
 		footer("UP/DOWN scroll  B back");
 		break;
 	case SC_UPDATES: {
-		header("Updates", NULL);
-		for (int i = 0; i < ncomp; i++) {
+		comp_reveal();
+		header("Updates", VERSION);
+		for (int row = 0; row < COMP_ROWS && comp_scroll + row < ncomp; row++) {
+			int i = comp_scroll + row;
 			Comp *c = &comp[i];
-			int y = 56 + i * 58;
+			int y = 56 + row * 58;
 			if (i == comp_sel) fill(8, y, VW - 16, 54, C_RAISED);
 			int dw = c->pretty[0] ? (int)strlen(c->pretty) * 16 + 12 : 0;   /* date, right aligned, scale 2 */
 			text_fit(16, y + 6, c->name, C_FG, 2, VW - 40 - dw);
@@ -3189,12 +3205,12 @@ static void draw_screen(uint32_t now) {
 			const char *m = c->status == CS_CHECKING ? "Checking..." : c->status == CS_IDLE ? "Waiting..." : c->status == CS_UPDATING ? "Updating..." : c->msg;
 			text_fit(16, y + 30, m, col, 2, VW - 40);
 		}
-		if (g_card_note[0]) text_fit(16, 384, g_card_note, C_BAD, 2, VW - 32);
-		if (up.restart_needed) text_fit(16, 410, "GitROMs was updated. Quit and reopen it.", C_SIGNAL, 2, VW - 32);
+		if (g_card_note[0]) text_fit(16, 360, g_card_note, C_BAD, 2, VW - 32);
+		if (up.restart_needed) text_fit(16, 392, "GitROMs was updated. Quit and reopen it.", C_SIGNAL, 2, VW - 32);
 		if (up.phase != UPH_NONE) footer("Checking...  B back");
-		else if (up_available()) footer("A update  SEL check again  B back");
+		else if (up_available()) footer(ncomp > COMP_ROWS ? "A update  UP/DN scroll  SEL check  B back" : "A update  SEL check again  B back");
 		else if (up.restart_needed) footer("A quit  SEL check again  B back");
-		else footer("SEL check again  B back");
+		else footer(ncomp > COMP_ROWS ? "UP/DN scroll  SEL check again  B back" : "SEL check again  B back");
 		break;
 	}
 	case SC_REPORTS: {
@@ -3474,6 +3490,26 @@ static void housekeeping(const char *rdir, const char *marker) {
 	else if (freeb >= 0 && freeb < 30LL * 1048576) snprintf(g_card_note, sizeof g_card_note, "Card almost full: %lld MB free.", freeb / 1048576);
 }
 
+/* Ports on ArkOS is the .sh files in this folder, not rows inside this screen.
+ * The Bat Kombat row saves snes/Bat_Kombat.sfc directly. Write the launcher on
+ * every start, beside GitROMs.sh. If an older zip is all that is on the card,
+ * play_snes.sh unpacks it once into that same .sfc. */
+static void ensure_bat_visible(void) {
+	char sh[400], old[400], cmd[900];
+	snprintf(old, sizeof old, "%s/Bat_Kombat.sh", g_ports);
+	remove(old);
+	snprintf(sh, sizeof sh, "%s/Bat Kombat.sh", g_ports);
+	FILE *f = fopen(sh, "wb");
+	if (!f) { logf_("bat kombat: could not write %s (%s)", sh, strerror(errno)); return; }
+	fputs("#!/bin/bash\n", f);
+	fputs("exec bash \"$(cd \"$(dirname \"$0\")\" && pwd)/gitroms/play_snes.sh\" \"Bat_Kombat.sfc\" \"Bat Kombat\"\n", f);
+	if (fclose(f) != 0) { logf_("bat kombat: write failed %s", sh); return; }
+	chmod(sh, 0755);
+	logf_("bat kombat: wrote %s", sh);
+	snprintf(cmd, sizeof cmd, "GITROMS_PUBLISH_ONLY=1 bash \"%s/gitroms/play_snes.sh\" \"Bat_Kombat.sfc\" \"Bat Kombat\" >/dev/null 2>&1", g_ports);
+	logf_("bat kombat: unpack rc=%d", system(cmd));
+}
+
 int main(void) {
 	const char *e;
 	signal(SIGPIPE, SIG_IGN);
@@ -3512,6 +3548,8 @@ int main(void) {
 		scpy(g_ports, sizeof g_ports, g_home);                 /* <ports>/gitroms/data -> <ports> */
 		for (int up_dirs = 0; up_dirs < 2; up_dirs++) { char *sl = strrchr(g_ports, '/'); if (sl) *sl = 0; }
 	}
+	ensure_bat_visible();
+	if (getenv("GITROMS_ENSURE_ONLY")) return 0;
 	snprintf(g_instpath, sizeof g_instpath, "%s/installed.txt", g_home);
 	snprintf(g_statepath, sizeof g_statepath, "%s/updates.txt", g_home);
 	inst_load();

@@ -40,8 +40,17 @@ z.writestr("UMK3_Batman.sfc", b"x")
 z.close()
 PY
 ok "bat rc" "$(run "Bat Kombat.sh")" 0
-ok "bat rom" "$(tail -1 "$T/ran")" "$T/roms/snes/Bat Kombat.sfc"
-if [ -s "$T/roms/snes/Bat Kombat.sfc" ]; then got=yes; else got=no; fi
+ok "bat rom" "$(tail -1 "$T/ran")" "$T/roms/snes/Bat_Kombat.sfc"
+if [ -s "$T/roms/snes/Bat_Kombat.sfc" ]; then got=yes; else got=no; fi
 ok "bat extracted" "$got" "yes"
+# The file GitROMs downloads is already Bat_Kombat.sfc. A leftover zip must not replace it.
+printf 'sfc-bytes' > "$T/roms/snes/Bat_Kombat.sfc"
+sleep 1
+touch "$T/roms/snes/UMK3_Batman.zip"
+ok "bat sfc rc" "$(run "Bat Kombat.sh")" 0
+ok "bat sfc rom" "$(tail -1 "$T/ran")" "$T/roms/snes/Bat_Kombat.sfc"
+ok "bat sfc kept" "$(cat "$T/roms/snes/Bat_Kombat.sfc")" "sfc-bytes"
+grep -F -q 'find:xenodorian/Bat-Kombat:Bat_Kombat.sfc' "$ROOT/port/gitroms/components.conf" && grep -F -q '../snes/Bat_Kombat.sfc' "$ROOT/port/gitroms/components.conf" && grep -F -q 'find:xenodorian/Bat-Kombat:Bat_Kombat.sfc' "$ROOT/native/gitroms.c" && grep -F -q 'find:xenodorian/Bat-Kombat:UMK3_Batman.zip' "$ROOT/native/gitroms.c" && ! grep -F -q '../snes/UMK3_Batman.zip' "$ROOT/native/gitroms.c" && ! grep -F -q '../snes/UMK3_Batman.zip' "$ROOT/port/gitroms/components.conf" && src=yes || src=no
+ok "bat source is the sfc" "$src" "yes"
 [ -n "$KEEP" ] && cat "$P/gitroms/data/play.log"
 echo "play_test: $pass passed, $fail failed"; [ $fail = 0 ]
