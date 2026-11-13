@@ -81,6 +81,8 @@ folder) so the game never exists in two places.
 The Pokemon War and Murder is built in: it is saved as `gba/PokemonWarAndMurder.gba`
 next to your other GBA games. Save states are tied to the exact ROM, so after an
 update an old `.state` may not load; in-game saves are not touched.
+Bat Kombat is built in the same way: `UMK3_Batman.zip` from xenodorian/Bat-Kombat
+is saved as `snes/UMK3_Batman.zip` next to your other SNES games.
 
 To add another game or bundle, add a line to `gitroms/components.conf`
 (the file explains the format).

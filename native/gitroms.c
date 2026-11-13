@@ -1487,6 +1487,8 @@ static void comps_load(void) {
 		/* One release ROM. The name is exact aside from case and accents. There is no second filename, so a stale copy cannot be chosen. */
 		{"Pokemon War and Murder", "find:xenodorian/Pokemon-War-and-Murder:PokemonWarAndMurder.gba", "../gba/PokemonWarAndMurder.gba", "", "", "", 1, 0},
 		{"Pokemon Fire Emblem", "find:xenodorian/PoekEmblem:PokemblemTheSacredStones.gba", "../gba/PokemblemTheSacredStones.gba", "", "", "", 1, 0},
+		/* SNES hack. The published file is a zip of one .sfc; ArkOS's snes folder accepts the zip. */
+		{"Bat Kombat", "find:xenodorian/Bat-Kombat:UMK3_Batman.zip", "../snes/UMK3_Batman.zip", "", "", "", 1, 0},
 	};
 	/* Entries of older components.conf files that a built-in entry replaced. */
 	static const char *obsolete[] = {
